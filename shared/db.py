@@ -23,7 +23,7 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine,
-                            autocomit = False,
+                            autocommit = False,
                             autoflush= False)
 
 class Base(DeclarativeBase):
