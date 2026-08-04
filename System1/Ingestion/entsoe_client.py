@@ -280,7 +280,7 @@ def fetch_load(
 
     df: pd.DataFrame = client.query_load(
         country_code=area,
-        start=start,
+        start=ts_start,
         end=ts_end
     )
 
