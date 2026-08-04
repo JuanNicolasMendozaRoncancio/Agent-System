@@ -39,6 +39,11 @@ _COUNTRY_BBOX: dict[str, tuple[float, float, float, float]] = {
     "CH": (47.8, 45.8, 5.9, 10.5),
 }
 
+_NETCDF_VAR_NAME: dict[str, str] = {
+    "2m_temperature":                    "t2m",
+    "surface_solar_radiation_downwards": "ssrd",
+}
+
 _SUPPORTED_COUNTRIES = set(_COUNTRY_BBOX.keys())
 
 _DATASET = "reanalysis-era5-single-levels"
@@ -123,55 +128,54 @@ def _netcdf_to_records(
     transform:
         Optional callable applied to each value before storing (e.g. K→°C).
     """
-    ds = xr.open_dataset(path, engine="netcdf4")
+    with xr.open_dataset(path, engine="netcdf4") as ds:
 
-    try:
-        da = ds[variable_name]
-    except KeyError:
-        available = list(ds.data_vars)
-        raise KeyError(
-            f"Variable '{variable_name}' not found in NetCDF. "
-            f"Available: {available}"
-        )
+        try:
+            da = ds[variable_name]
+        except KeyError:
+            available = list(ds.data_vars)
+            raise KeyError(
+                f"Variable '{variable_name}' not found in NetCDF. "
+                f"Available: {available}"
+            )
 
-    # Spatial mean over latitude and longitude dimensions
-    # ERA5 dimension names are 'latitude' and 'longitude'
-    spatial_dims = [d for d in da.dims if d in ("latitude", "longitude")]
-    da_mean = da.mean(dim=spatial_dims)
+        # Spatial mean over latitude and longitude dimensions
+        # ERA5 dimension names are 'latitude' and 'longitude'
+        spatial_dims = [d for d in da.dims if d in ("latitude", "longitude")]
+        da_mean = da.mean(dim=spatial_dims)
 
-    records: list[dict] = []
-    for time_val in da_mean.coords["valid_time"].values:
-        value = float(da_mean.sel(valid_time=time_val).values)
+        records: list[dict] = []
+        for time_val in da_mean.coords["valid_time"].values:
+            value = float(da_mean.sel(valid_time=time_val).values)
 
-        if np.isnan(value):
-            continue  # skip missing data
+            if np.isnan(value):
+                continue  # skip missing data
 
-        if transform is not None:
-            value = transform(value)
+            if transform is not None:
+                value = transform(value)
 
-        # Convert numpy datetime64 → Python datetime (UTC-aware)
-        ts = (
-            datetime.utcfromtimestamp(
-                (time_val - np.datetime64("1970-01-01T00:00:00")) /
-                np.timedelta64(1, "s")
-            ).replace(tzinfo=timezone.utc)
-        )
+            # Convert numpy datetime64 → Python datetime (UTC-aware)
+            ts = (
+                datetime.fromtimestamp(
+                    (time_val - np.datetime64("1970-01-01T00:00:00")) /
+                    np.timedelta64(1, "s")
+                ).replace(tzinfo=timezone.utc)
+            )
 
-        records.append({
-            "timestamp":  ts,
-            "source_api": "copernicus",
-            "country":    country_code.upper(),
-            "variable":   output_variable,
-            "value":      value,
-            "unit":       unit,
-            "metadata": {
-                "dataset":    _DATASET,
-                "resolution": "hourly",
-                "aggregation": "spatial_mean",
-            },
-        })
+            records.append({
+                "timestamp":  ts,
+                "source_api": "copernicus",
+                "country":    country_code.upper(),
+                "variable":   output_variable,
+                "value":      value,
+                "unit":       unit,
+                "metadata": {
+                    "dataset":    _DATASET,
+                    "resolution": "hourly",
+                    "aggregation": "spatial_mean",
+                },
+            })
 
-    ds.close()
     return records
 
 def _fetch(
@@ -205,8 +209,9 @@ def _fetch(
             start.isoformat(), end.isoformat(),
         )
         client.retrieve(_DATASET, request, tmp_path)
+        netcdf_var = _NETCDF_VAR_NAME.get(variable, variable)
         records = _netcdf_to_records(
-            tmp_path, variable, output_variable, country_code, unit, transform
+            tmp_path, netcdf_var, output_variable, country_code, unit, transform
         )
         logger.info("Fetched %d records (%s, %s)", len(records), output_variable, country_code)
         return records
