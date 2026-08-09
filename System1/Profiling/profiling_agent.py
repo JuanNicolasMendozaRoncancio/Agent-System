@@ -625,4 +625,4 @@ def invoke_profiling_graph(state: AgentState) -> AgentState:
     recursion_limit=10 is generous for a linear 3-node graph with no loops.
     """
     graph = build_profiling_graph()
-    return graph.invoke(state, config={"recursion_limit": 10})
+    return graph.invoke(state)
