@@ -1,5 +1,5 @@
 """
-Ingestion Agent — Step 6.
+Ingestion Agent
 
 LangGraph node that orchestrates ENTSO-E and Copernicus data ingestion
 via LLM tool use. The LLM decides which endpoints to call based on the

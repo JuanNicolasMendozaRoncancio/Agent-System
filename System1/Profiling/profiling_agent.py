@@ -1,5 +1,5 @@
 """
-Profiling Agent — Step 7.
+Profiling Agent.
 
 Computes a structured profile of the batch produced by the Ingestion Agent
 and generates a natural-language summary for the dashboard.
