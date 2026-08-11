@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS data_quality_runs (
     n_anomalies          INTEGER DEFAULT 0,
     anomalies            JSONB,
     rca_result           TEXT,
+    run_report           TEXT,
     severity             VARCHAR(20),   
     llm_provider         VARCHAR(20),   
     llm_fallback_used    BOOLEAN DEFAULT FALSE,
