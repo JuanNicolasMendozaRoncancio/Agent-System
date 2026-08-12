@@ -291,4 +291,4 @@ def build_reporter_graph():
 def invoke_reporter_graph(state: AgentState) -> AgentState:
     """Invoke the Reporter Agent graph."""
     graph = build_reporter_graph()
-    return graph.invoke(state, config={"recursion_limit": 10})
+    return graph.invoke(state)
