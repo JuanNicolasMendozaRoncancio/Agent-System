@@ -66,16 +66,12 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
  
-# Redis channels
 CHANNEL_VALIDATED_DATA = "validated_data"
 CHANNEL_FAILED_MESSAGES = "failed_messages"
  
-# Retry delays in seconds for the DLQ: 1 min → 5 min → 15 min.
-# Configurable via .env as a comma-separated list of integers.
 _raw_delays = os.getenv("DLQ_RETRY_DELAYS", "60,300,900")
 DLQ_RETRY_DELAYS: list[int] = [int(d.strip()) for d in _raw_delays.split(",")]
  
-# Maximum retry attempts before permanent failure.
 DLQ_MAX_RETRIES: int = len(DLQ_RETRY_DELAYS)
 
 # ---------------------------------------------------------------------------
@@ -193,7 +189,7 @@ def _handle_validated_data(raw_message: str) -> None:
     2. Filter: only process 'system1_complete' events.
     3. Validate required fields.
     4. Write trigger row to analysis_runs.
-    5. [To Do] Invoke the Sistema 2 pipeline.
+    5. Invoke the System 2 pipeline.
  
     Any exception in steps 3-5 routes the message to the DLQ.
  
@@ -234,8 +230,29 @@ def _handle_validated_data(raw_message: str) -> None:
         _publish_to_dlq(raw_message, error)
         return
 
-    # placeholder — Analysis Agent invocation will be added in Step 13.
-    logger.info("System 2 trigger persisted — pipeline invocation pending (Step 13).")
+    from System2.Analysis.analysis_agent import invoke_analysis_graph
+    from System2.Visualization.visualization_agent import invoke_viz_graph
+    from System2.Narrative.narrative_agent import invoke_narrative_graph
+
+    state = {
+        "run_id":       payload["run_id"],
+        "countries":    payload.get("countries", []),
+        "triggered_by": "redis:system1_complete",
+        "messages":     [],
+    }
+
+    try:
+        state = invoke_analysis_graph(state)
+        state = invoke_viz_graph(state)
+        state = invoke_narrative_graph(state)
+        logger.info(
+            "Sistema 2 pipeline complete for run_id=%s — provider=%s",
+            payload["run_id"], state.get("llm_provider"),
+        )
+    except Exception as exc:
+        error = f"Sistema 2 pipeline failed: {exc}"
+        logger.error("Pipeline error for run_id=%s: %s", payload.get("run_id"), exc)
+        _publish_to_dlq(raw_message, error)     
 
 # ---------------------------------------------------------------------------
 # DLQ handler
@@ -286,7 +303,6 @@ def _handle_failed_message(raw_envelope: str) -> None:
         _handle_validated_data(original_message)
         logger.info("DLQ retry %d succeeded.", retry_count + 1)
     except Exception as exc:
-        # Retry itself failed — re-publish with incremented retry_count.
         error = f"Retry {retry_count + 1} failed: {exc}"
         logger.warning(error)
         _publish_to_dlq(original_message, error, retry_count=retry_count + 1)
@@ -376,6 +392,8 @@ def start_subscriber() -> None:
         daemon=True
     )
 
+    main_thread.start()
+    dlq_thread.start()
     logger.info("Sistema 2 subscriber started (2 listener threads).")
  
     main_thread.join()
