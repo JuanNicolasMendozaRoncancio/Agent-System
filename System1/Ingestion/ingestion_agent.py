@@ -238,7 +238,7 @@ def _build_llm_with_tools():
     if not groq_key:
         raise EnvironmentError("GROQ_API_KEY not found in env.")
     llm = ChatGroq(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         api_key=groq_key,
         temperature=0,
     )

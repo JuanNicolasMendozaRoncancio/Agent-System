@@ -26,7 +26,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_GROQ_MODEL = "llama-3.1-8b-instant"
+_GROQ_MODEL = "openai/gpt-oss-20b"
 _GEMINI_MODEL = "gemini-2.0-flash"
 
 _GEMINI_BASE_URL = (
