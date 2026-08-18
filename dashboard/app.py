@@ -92,13 +92,17 @@ with tab1:
     render_tab1(api_url=api_url)
  
 with tab2:
-    st.info("Tab 2 — Energy Market (Step 19)")
+    from dashboard.tabs.tab2_energymarked import render as render_tab2
+    render_tab2()
  
 with tab3:
-    st.info("Tab 3 — Climate Data (Step 19)")
+    from dashboard.tabs.tab3_climatedata import render as render_tab3
+    render_tab3()
  
 with tab4:
-    st.info("Tab 4 — Quality & Risk (Step 19)")
+    from dashboard.tabs.tab4_dataquality import render as render_tab4
+    render_tab4()
  
 with tab5:
-    st.info("Tab 5 — Observability (Step 19)")
+    from dashboard.tabs.tab5_agentobserva import render as render_tab5
+    render_tab5()
