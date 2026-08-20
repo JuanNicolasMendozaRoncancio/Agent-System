@@ -31,6 +31,7 @@ Why a daemon thread for the subscriber (same as E2E test):
 """
 from __future__ import annotations
 
+import os
 import asyncio
 import json
 import logging
@@ -47,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(os.getenv("ENV_FILE", ".env"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -370,10 +371,20 @@ async def pipeline_run(req: PipelineRunRequest) -> StreamingResponse:
 @app.get("/health")
 async def health() -> dict:
     """Check connectivity to Redis and PostgreSQL."""
-    from shared.db import check_connection as pg_ok
+    from shared.db import check_connection as pg_ok, engine
     from shared.redis_client import check_connection as redis_ok
+    
+    pg_status = False
+    pg_error = None
+    try:
+        pg_status = pg_ok()
+    except Exception as exc:
+        pg_error = str(exc)
+        logger.error("PostgreSQL health check failed: %s", exc)
+    
     return {
-        "postgres": pg_ok(),
+        "postgres": pg_status,
+        "postgres_error": pg_error,
         "redis":    redis_ok(),
         "status":   "ok",
     }

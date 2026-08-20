@@ -6,6 +6,10 @@ import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
+import logging
+logger = logging.getLogger(__name__)
+
+
 _DATABASE_URL = (
     f"postgresql+psycopg://"
     f"{os.getenv('POSTGRES_USER', 'agentes')}:"
@@ -13,6 +17,7 @@ _DATABASE_URL = (
     f"{os.getenv('POSTGRES_HOST', 'localhost')}:"
     f"{os.getenv('POSTGRES_PORT', '5432')}/"
     f"{os.getenv('POSTGRES_DB', 'agentes_db')}"
+    f"?sslmode={os.getenv('POSTGRES_SSLMODE', 'disable')}"
 )
 
 engine = create_engine(
@@ -43,7 +48,8 @@ def check_connection() -> bool:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as exc:
+        logger.error("PostgreSQL connection failed: %s", exc)
         return False
 
     
