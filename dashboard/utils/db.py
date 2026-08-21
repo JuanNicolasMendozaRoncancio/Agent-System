@@ -16,20 +16,42 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
  
 from dotenv import load_dotenv
-load_dotenv(encoding="latin-1")
+load_dotenv()
  
-from sqlalchemy import text
-from shared.db import engine
- 
+from sqlalchemy import create_engine, text
+
 logger = logging.getLogger(__name__)
 
+
+def _get_engine():
+    """
+    Build the SQLAlchemy engine lazily.
+
+    Why lazy and not module-level like shared/db.py:
+        shared/db.py builds the engine at import time using os.getenv().
+        In Streamlit Cloud, secrets are injected as environment variables
+        AFTER the module is first imported, so os.getenv() returns None
+        and the engine is built with the default fallback values ('agentes').
+        Building the engine inside a function guarantees os.getenv() is
+        called at connection time, when secrets are already available.
+    """
+    database_url = (
+        f"postgresql+psycopg://"
+        f"{os.getenv('POSTGRES_USER', 'agentes')}:"
+        f"{os.getenv('POSTGRES_PASSWORD', 'agentes')}@"
+        f"{os.getenv('POSTGRES_HOST', 'localhost')}:"
+        f"{os.getenv('POSTGRES_PORT', '5432')}/"
+        f"{os.getenv('POSTGRES_DB', 'agentes_db')}"
+        f"?sslmode={os.getenv('POSTGRES_SSLMODE', 'disable')}"
+    )
+    return create_engine(database_url, pool_size=5, max_overflow=10, pool_pre_ping=True)
+ 
 def get_latest_quality_run() -> dict | None:
     """
     Return the most recent row from data_quality_runs as a plain dict.
     """
     try:
-        with engine.connect() as conn:
-            row = conn.execute(
+        with _get_engine().connect() as conn:            row = conn.execute(
                 text("""
                     SELECT
                         run_id,
@@ -81,7 +103,7 @@ def get_latest_analysis_run() -> dict | None:
  
     """
     try:
-        with engine.connect() as conn:
+        with _get_engine().connect() as conn:
             row = conn.execute(
                 text("""
                     SELECT
@@ -141,7 +163,7 @@ def get_recent_runs(n: int = 10) -> list[dict]:
     Returns an empty list if no runs exist or the query fails.
     """
     try:
-        with engine.connect() as conn:
+        with _get_engine().connect() as conn:
             rows = conn.execute(
                 text("""
                     SELECT
