@@ -62,7 +62,7 @@ with st.sidebar:
     if st.button("🔍 Health check", use_container_width=True):
         import requests
         try:
-            resp = requests.get(f"{api_url.rstrip('/')}/health", timeout=5)
+            resp = requests.get(f"{api_url.rstrip('/')}/health", timeout=30)            
             data = resp.json()
             col1, col2 = st.columns(2)
             col1.metric("PostgreSQL", "✅" if data.get("postgres") else "❌")
