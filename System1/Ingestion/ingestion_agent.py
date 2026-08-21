@@ -255,15 +255,22 @@ Your job is to collect electricity and climate data for the requested countries
 and time window by calling the available tools.
 
 Rules:
-- For a "full" run: call fetch_generation, fetch_load, fetch_temperature,
-  and fetch_solar_radiation for EACH country.
-- For an "incremental" run: call only fetch_generation and fetch_load
-  (climate data changes slowly and does not need hourly updates).
+- For a "full" run, you MUST call exactly these 4 tools for EACH country:
+    1. fetch_generation
+    2. fetch_load
+    3. fetch_temperature
+    4. fetch_solar_radiation
+- For an "incremental" run, you MUST call exactly these 2 tools for EACH country:
+    1. fetch_generation
+    2. fetch_load
 - Always use ISO 8601 format for dates (e.g. '2024-06-01T00:00:00').
 - Always pass the run_id from the context as the first argument to every tool call.
-- Emit ALL required tool calls in a single response — do not wait for intermediate results.
-- On a retry pass: call ONLY the tools listed as failed. Do not re-call successful tools.
-- When all required tools are OK, respond with a plain text confirmation and no tool calls.
+- Emit ALL required tool calls in a single response — do not wait for results.
+- On a retry pass: review the tool_results summary and call ALL tools that
+  are missing or have status "error". A tool is missing if it does not appear
+  in the summary at all. DO NOT re-call tools that already have status "ok".
+- When all required tools have status "ok" in the summary, respond with a
+  plain text confirmation and no tool calls.
 """
 
 

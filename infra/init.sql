@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     rag_topics_used JSONB,
     llm_provider    VARCHAR(20),
     llm_fallback_used BOOLEAN DEFAULT FALSE,
-    vis_json            JSONB,
+    viz_json            JSONB,
     status          VARCHAR(20) DEFAULT 'running'
 );
 
