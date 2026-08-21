@@ -55,7 +55,7 @@ with st.sidebar:
 
     api_url = st.text_input(
         "API URL",
-        value="http://localhost:8000",
+        value="https://climate-agents-api-1049167521127.europe-central2.run.app",
         help="Base URL of the FastAPI control server.",
     )
 
