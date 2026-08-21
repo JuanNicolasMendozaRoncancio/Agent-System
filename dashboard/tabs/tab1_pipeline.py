@@ -56,7 +56,7 @@ _DEFAULT_DATE_TO    = date(2024, 6, 1)
 _DEFAULT_TIME_FROM  = "00:00:00"
 _DEFAULT_TIME_TO    = "03:00:00"
 _DEFAULT_RUN_TYPE   = "full"
-_DEFAULT_API_URL    = "http://localhost:8000"
+_DEFAULT_API_URL    = "https://climate-agents-api-1049167521127.europe-central2.run.app"
  
 _AVAILABLE_COUNTRIES = ["FR", "DE", "ES", "BE", "NL", "PT", "IT", "PL", "AT", "CH"]
 
