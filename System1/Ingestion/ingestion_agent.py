@@ -554,6 +554,83 @@ def save_node(state: AgentState) -> dict:
     }
 
 
+def copernicus_node(state: AgentState) -> dict:
+    """
+    Deterministic Copernicus ingestion node — no LLM involved.
+
+    Why a separate node instead of LLM tools:
+        fetch_temperature and fetch_solar_radiation are always called for
+        every country on a full run — there is no decision for the LLM to make.
+        Copernicus also takes 30-70s per variable, which causes the LLM to
+        time out or stop waiting before the tool returns. A dedicated Python
+        node runs the calls sequentially and reliably outside the ReAct loop.
+
+    Skipped entirely for incremental runs (climate data changes slowly and
+    does not need hourly updates).
+    """
+    if state["run_type"] != "full":
+        logger.info("copernicus_node: skipping (run_type=%s)", state["run_type"])
+        return {"records": state.get("records", [])}
+
+    run_id    = state["run_id"]
+    countries = state["countries"]
+    date_from = state["date_from"]
+    date_to   = state["date_to"]
+
+    cc = _get_copernicus_client()
+    new_records: list[dict] = []
+
+    for country in countries:
+        logger.info("copernicus_node: fetching temperature for %s", country)
+        try:
+            new_records.extend(cc.fetch_temperature(country, date_from, date_to))
+        except Exception as exc:
+            logger.error("copernicus_node: fetch_temperature failed for %s: %s", country, exc)
+
+        logger.info("copernicus_node: fetching solar radiation for %s", country)
+        try:
+            new_records.extend(cc.fetch_solar_radiation(country, date_from, date_to))
+        except Exception as exc:
+            logger.error("copernicus_node: fetch_solar_radiation failed for %s: %s", country, exc)
+
+    if not new_records:
+        logger.warning("copernicus_node: no records fetched")
+        return {"records": state.get("records", [])}
+
+    # INSERT into energy_climate_records — same logic as save_node
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO energy_climate_records
+                        (run_id, timestamp, source_api, country, variable, value, unit, metadata)
+                    VALUES
+                        (:run_id, :timestamp, :source_api, :country, :variable, :value, :unit, :metadata)
+                """),
+                [
+                    {
+                        "run_id":     run_id,
+                        "timestamp":  rec.get("timestamp"),
+                        "source_api": rec.get("source_api"),
+                        "country":    rec.get("country"),
+                        "variable":   rec.get("variable"),
+                        "value":      rec.get("value"),
+                        "unit":       rec.get("unit"),
+                        "metadata":   json.dumps(rec.get("metadata")) if rec.get("metadata") else None,
+                    }
+                    for rec in new_records
+                ],
+            )
+            conn.commit()
+        logger.info("copernicus_node: inserted %d records", len(new_records))
+    except Exception as exc:
+        logger.error("copernicus_node: DB insert failed: %s", exc)
+
+    # Merge with existing records so downstream agents see the full batch
+    return {"records": state.get("records", []) + new_records}
+
+
+
 # ---------------------------------------------------------------------------
 # Graph assembly
 # ---------------------------------------------------------------------------
@@ -580,6 +657,8 @@ def build_ingestion_graph():
     graph.add_node("tool_node", tool_node)
     graph.add_node("summarize_node", summarize_node)
     graph.add_node("save_node", save_node)
+    graph.add_node("copernicus_node", copernicus_node)
+
 
     graph.add_edge(START, "ingestion_node")
 
@@ -592,7 +671,8 @@ def build_ingestion_graph():
     # After tools execute, always pass through summarize_node before
     graph.add_edge("tool_node", "summarize_node")
     graph.add_edge("summarize_node", "ingestion_node")
-    graph.add_edge("save_node", END)
+    graph.add_edge("save_node", "copernicus_node")
+    graph.add_edge("copernicus_node", END)
 
     return graph.compile(checkpointer=None)
 
