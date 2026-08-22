@@ -498,7 +498,7 @@ def save_node(state: AgentState) -> dict:
     completed_at = datetime.now(timezone.utc)
     elapsed_s = (completed_at - started_at).total_seconds()
 
-    sources = list({r.get("source_api") for r in records if r.get("source_api")})
+    sources = list({r.get("source_api") for r in records if r.get("source_api")} | {"copernicus", "entsoe"})
     output_data = {
         "n_records":   inserted,
         "sources":     sources,
@@ -630,6 +630,67 @@ def copernicus_node(state: AgentState) -> dict:
     return {"records": state.get("records", []) + new_records}
 
 
+def load_node(state: AgentState) -> dict:
+    """
+    Deterministic ENTSO-E load ingestion node — no LLM involved.
+
+    Why a separate node instead of relying on the LLM tool fetch_load:
+        fetch_load is mandatory for every run (full and incremental) but
+        the LLM orchestrator occasionally omits it. A dedicated Python node
+        guarantees load_actual_aggregated is always fetched, which is required
+        by _compute_risk_for_country() in the Analysis Agent (C1 component).
+
+    Always runs for both full and incremental runs — load data is needed
+    for the risk score regardless of run type.
+    """
+    run_id    = state["run_id"]
+    countries = state["countries"]
+    date_from = state["date_from"]
+    date_to   = state["date_to"]
+
+    ec = _get_entsoe_client()
+    new_records: list[dict] = []
+
+    for country in countries:
+        logger.info("load_node: fetching load for %s", country)
+        try:
+            new_records.extend(ec.fetch_load(country, date_from, date_to))
+        except Exception as exc:
+            logger.error("load_node: fetch_load failed for %s: %s", country, exc)
+
+    if not new_records:
+        logger.warning("load_node: no records fetched")
+        return {"records": state.get("records", [])}
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO energy_climate_records
+                        (run_id, timestamp, source_api, country, variable, value, unit, metadata)
+                    VALUES
+                        (:run_id, :timestamp, :source_api, :country, :variable, :value, :unit, :metadata)
+                """),
+                [
+                    {
+                        "run_id":     run_id,
+                        "timestamp":  rec.get("timestamp"),
+                        "source_api": rec.get("source_api"),
+                        "country":    rec.get("country"),
+                        "variable":   rec.get("variable"),
+                        "value":      rec.get("value"),
+                        "unit":       rec.get("unit"),
+                        "metadata":   json.dumps(rec.get("metadata")) if rec.get("metadata") else None,
+                    }
+                    for rec in new_records
+                ],
+            )
+            conn.commit()
+        logger.info("load_node: inserted %d records", len(new_records))
+    except Exception as exc:
+        logger.error("load_node: DB insert failed: %s", exc)
+
+    return {"records": state.get("records", []) + new_records}
 
 # ---------------------------------------------------------------------------
 # Graph assembly
@@ -658,6 +719,7 @@ def build_ingestion_graph():
     graph.add_node("summarize_node", summarize_node)
     graph.add_node("save_node", save_node)
     graph.add_node("copernicus_node", copernicus_node)
+    graph.add_node("load_node", load_node)
 
 
     graph.add_edge(START, "ingestion_node")
@@ -672,7 +734,8 @@ def build_ingestion_graph():
     graph.add_edge("tool_node", "summarize_node")
     graph.add_edge("summarize_node", "ingestion_node")
     graph.add_edge("save_node", "copernicus_node")
-    graph.add_edge("copernicus_node", END)
+    graph.add_edge("copernicus_node", "load_node")
+    graph.add_edge("load_node", END)
 
     return graph.compile(checkpointer=None)
 

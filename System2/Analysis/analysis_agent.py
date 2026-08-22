@@ -642,7 +642,6 @@ def analysis_node(state: AgentState) -> dict:
  
     return {"messages": [response], "llm_provider": provider}
  
- 
 def _process_tool_messages(messages: list[BaseMessage]) -> tuple[dict, list[dict]]:
     """
     Parse ToolMessages produced by ToolNode into structured analysis results.
@@ -691,7 +690,6 @@ def _process_tool_messages(messages: list[BaseMessage]) -> tuple[dict, list[dict
  
     return analysis_results, rag_topics
  
- 
 def process_evidence_node(state: AgentState) -> dict:
     """
     Intermediate node between tool_node and save_analysis_node.
@@ -718,7 +716,6 @@ def process_evidence_node(state: AgentState) -> dict:
         "rag_topics":       rag_topics,
         "messages":         [],  
     }
- 
  
 def save_analysis_node(state: AgentState) -> dict:
     """
@@ -807,6 +804,56 @@ def save_analysis_node(state: AgentState) -> dict:
  
     return {"analysis_error": error_msg}
 
+def risk_node(state: AgentState) -> dict:
+    """
+    Deterministic risk computation node — no LLM involved.
+
+    Why a separate node instead of relying on the LLM tool compute_risk_indicators:
+        The LLM orchestrator consistently emits only one tool call (detect_patterns),
+        skipping compute_risk_indicators. Since risk computation is always mandatory
+        for every country, a deterministic Python node guarantees it runs.
+    """
+    run_id           = state["run_id"]
+    countries        = state.get("countries", [])
+    analysis_results = state.get("analysis_results", {})
+
+    for country in countries:
+        risk = _compute_risk_for_country(country, run_id)
+        risk["country"] = country.upper()
+        risk["run_id"]  = run_id
+        analysis_results.setdefault(country, {})
+        analysis_results[country]["risk"] = risk
+        logger.info("risk_node: computed risk for %s — score=%.2f", country, risk.get("score", 0))
+
+    return {"analysis_results": analysis_results}
+
+def rag_node(state: AgentState) -> dict:
+    """
+    Deterministic RAG topics node — no LLM involved.
+
+    Why a separate node instead of relying on the LLM tool rag_context:
+        The LLM consistently skips rag_context when it emits only one tool call.
+        RAG topics enrich the Narrative Agent and are always useful when available,
+        so this node fetches them unconditionally in Python.
+    """
+    if not _RAG_API_URL:
+        logger.info("rag_node: RAG_API_URL not set — skipping")
+        return {"rag_topics": []}
+
+    try:
+        response = httpx.get(
+            f"{_RAG_API_URL}/rag/topics/active",
+            headers={"X-RAG-Key": _RAG_API_KEY},
+            timeout=_RAG_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+        topics = data if isinstance(data, list) else data.get("topics", [])
+        logger.info("rag_node: fetched %d RAG topics", len(topics))
+        return {"rag_topics": topics}
+    except Exception as exc:
+        logger.warning("rag_node: request failed: %s", exc)
+        return {"rag_topics": []}
 # ---------------------------------------------------------------------------
 # Graph assembly
 # ---------------------------------------------------------------------------
@@ -826,18 +873,22 @@ def build_analysis_graph():
     tool_node = ToolNode(_TOOLS)
  
     graph = StateGraph(AgentState)
- 
-    graph.add_node("analysis_node",       analysis_node)
-    graph.add_node("tool_node",           tool_node)
+
+    graph.add_node("analysis_node",         analysis_node)
+    graph.add_node("tool_node",             tool_node)
     graph.add_node("process_evidence_node", process_evidence_node)
-    graph.add_node("save_analysis_node",  save_analysis_node)
+    graph.add_node("risk_node",             risk_node)
+    graph.add_node("rag_node",              rag_node)
+    graph.add_node("save_analysis_node",    save_analysis_node)
  
     graph.add_edge(START,                   "analysis_node")
     graph.add_edge("analysis_node",         "tool_node")
     graph.add_edge("tool_node",             "process_evidence_node")
-    graph.add_edge("process_evidence_node", "save_analysis_node")
+    graph.add_edge("process_evidence_node", "risk_node")
+    graph.add_edge("risk_node",             "rag_node")
+    graph.add_edge("rag_node",              "save_analysis_node")
     graph.add_edge("save_analysis_node",    END)
- 
+    
     return graph.compile(checkpointer=None)
  
  
