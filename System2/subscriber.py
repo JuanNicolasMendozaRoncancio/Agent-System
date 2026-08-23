@@ -176,6 +176,37 @@ def _publish_to_dlq(raw_message: str, error: str, retry_count: int = 0) -> None:
     except Exception as exc:
         logger.error("DLQ publish failed — message dropped: %s | cause: %s", error, exc)
 
+def _save_to_dead_messages(original_message: str, error: str, retry_count: int) -> None:
+    """
+    Persist a permanently failed message to PostgreSQL dead_messages table.
+
+    Called only when retry_count >= DLQ_MAX_RETRIES. This gives a durable
+    audit trail of messages that exhausted all retry attempts, unlike
+    logging which is ephemeral.
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO dead_messages
+                        (original_message, last_error, retry_count, failed_at)
+                    VALUES
+                        (:original_message, :last_error, :retry_count, :failed_at)
+                """),
+                {
+                    "original_message": original_message,
+                    "last_error":       error,
+                    "retry_count":      retry_count,
+                    "failed_at":        datetime.now(timezone.utc),
+                },
+            )
+            conn.commit()
+        logger.error(
+            "Message permanently failed after %d retries — saved to dead_messages",
+            retry_count,
+        )
+    except Exception as exc:
+        logger.error("Failed to save dead message to PostgreSQL: %s", exc)
 # ---------------------------------------------------------------------------
 # Core handler
 # ---------------------------------------------------------------------------
@@ -290,13 +321,19 @@ def _handle_failed_message(raw_envelope: str) -> None:
             "Original error: %s | message: %.200s",
             DLQ_MAX_RETRIES, original_error, original_message,
         )
+        _save_to_dead_messages(original_message, original_error, retry_count)
         return
 
-    delay = DLQ_RETRY_DELAYS[retry_count]
-    logger.info(
-        "DLQ retry %d/%d in %ds (original error: %s)",
-        retry_count + 1, DLQ_MAX_RETRIES, delay, original_error,
-    )
+    
+    if retry_count < len(DLQ_RETRY_DELAYS):
+        delay = DLQ_RETRY_DELAYS[retry_count]
+        logger.info(
+            "DLQ retry %d/%d in %ds (original error: %s)",
+            retry_count + 1, DLQ_MAX_RETRIES, delay, original_error,
+        )
+    else:
+        base_delay = int(os.getenv("DLQ_BACKOFF_BASE", "60"))
+        delay = min(base_delay * (2 ** retry_count), 900)
     time.sleep(delay)
 
     try:

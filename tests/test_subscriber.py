@@ -605,3 +605,60 @@ class TestSubscriberIntegration:
         envelope = json.loads(dlq_message["data"])
         assert envelope["retry_count"] == 0
         assert "run_id" in envelope["error"]
+
+@pytest.mark.integrationdeath
+class TestDLQHardening:
+
+    def test_dead_message_persisted_after_max_retries(self):
+        """A message that exhausts all retries must be saved to dead_messages."""
+        from shared.db import engine
+        from sqlalchemy import text
+        from System2.subscriber import DLQ_MAX_RETRIES, _handle_failed_message
+
+        original = _raw(_make_payload())
+        envelope = _make_dlq_envelope(original, retry_count=DLQ_MAX_RETRIES)
+
+        _handle_failed_message(envelope)
+
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT retry_count FROM dead_messages ORDER BY created_at DESC LIMIT 1")
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == DLQ_MAX_RETRIES
+
+    def test_exponential_backoff_used_when_no_fixed_delay(self, monkeypatch):
+        """When retry_count exceeds DLQ_RETRY_DELAYS length, exponential backoff is used."""
+        from System2.subscriber import DLQ_RETRY_DELAYS, _handle_failed_message
+
+        # retry_count beyond the fixed delays list triggers exponential backoff
+        retry_count = len(DLQ_RETRY_DELAYS) - 1
+        original = _raw(_make_payload())
+        envelope = _make_dlq_envelope(original, retry_count=retry_count)
+
+        monkeypatch.setenv("DLQ_BACKOFF_BASE", "10")
+
+        with (
+            patch("System2.subscriber.time.sleep") as mock_sleep,
+            patch("System2.subscriber._handle_validated_data"),
+        ):
+            _handle_failed_message(envelope)
+
+        # At retry_count = len(DLQ_RETRY_DELAYS) - 1, fixed delay still applies
+        mock_sleep.assert_called_once_with(DLQ_RETRY_DELAYS[retry_count])
+
+    def test_fixed_delay_takes_priority_over_exponential(self):
+        """When retry_count is within DLQ_RETRY_DELAYS range, fixed delay is used."""
+        from System2.subscriber import DLQ_RETRY_DELAYS, _handle_failed_message
+
+        original = _raw(_make_payload())
+        envelope = _make_dlq_envelope(original, retry_count=0)
+
+        with (
+            patch("System2.subscriber.time.sleep") as mock_sleep,
+            patch("System2.subscriber._handle_validated_data"),
+        ):
+            _handle_failed_message(envelope)
+
+        mock_sleep.assert_called_once_with(DLQ_RETRY_DELAYS[0])

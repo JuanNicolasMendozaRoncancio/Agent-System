@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS agent_state (
     elapsed_s   DOUBLE PRECISION
 );
 
+
+CREATE TABLE IF NOT EXISTS dead_messages (
+    id              SERIAL PRIMARY KEY,
+    original_message TEXT NOT NULL,
+    last_error      TEXT,
+    retry_count     INTEGER DEFAULT 0,
+    failed_at       TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_messages_failed_at ON dead_messages(failed_at);
 CREATE INDEX IF NOT EXISTS idx_energy_run_id ON energy_climate_records(run_id);
 CREATE INDEX IF NOT EXISTS idx_quality_run_id ON data_quality_runs(run_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_run_id ON analysis_runs(run_id);
