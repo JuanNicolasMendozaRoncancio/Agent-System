@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 @pytest.fixture(autouse=True)
 def _rate_limit_pause():
     yield
-    time.sleep(300)
+    time.sleep(10)
 
 load_dotenv()
 

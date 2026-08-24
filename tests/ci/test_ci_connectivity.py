@@ -102,14 +102,11 @@ class TestCopernicusConnectivity:
     """
     Verify Copernicus CDS credentials and endpoint reachability.
 
-    Why check the info endpoint instead of submitting a retrieve request:
-        A retrieve request queues an ERA5 download job that can take 30-120
-        seconds and consumes CDS quota. The /api/userinfo endpoint returns
-        account metadata (name, uid, accepted terms) in under 2 seconds and
-        is the canonical way to validate a CDS key without starting a job.
+    Copernicus recently migrated to a new infrastructure (CADS).
+    The old /api/userinfo endpoint no longer exists.
+    To verify credentials without downloading data, we query the /retrieve/v1/jobs
+    endpoint, which lists the user's recent download jobs and requires valid auth.
     """
-
-    _INFO_URL = "https://cds.climate.copernicus.eu/api/userinfo"
 
     def test_url_and_key_are_set(self):
         """Both COPERNICUS_URL and COPERNICUS_API_KEY must be present."""
@@ -118,31 +115,39 @@ class TestCopernicusConnectivity:
 
     def test_credentials_accepted_by_cds(self):
         """
-        GET /api/userinfo with Bearer auth must return HTTP 200.
+        GET /retrieve/v1/jobs with Bearer auth must return HTTP 200.
 
-        The CDS v2 API uses Bearer token authentication. A 200 response
-        confirms the key exists and the CDS service is reachable. A 401
-        means the key has been revoked or the terms of service have not
-        been accepted on the CDS portal.
+        A 200 response confirms the key exists and the CDS service is reachable. 
+        A 401 means the key has been revoked or is invalid.
         """
         api_key = os.getenv("COPERNICUS_API_KEY")
-        if not api_key:
-            pytest.skip("COPERNICUS_API_KEY not set")
+        # Aseguramos que no haya un slash extra al final de la URL base
+        base_url = os.getenv("COPERNICUS_URL", "").rstrip("/") 
+        
+        if not api_key or not base_url:
+            pytest.skip("COPERNICUS_API_KEY or COPERNICUS_URL not set")
+
+        # Nuevo endpoint de la API para consultar trabajos encolados
+        check_url = f"{base_url}/retrieve/v1/jobs"
 
         response = httpx.get(
-            self._INFO_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
+            check_url,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "PRIVATE-TOKEN": api_key
+                    },
             timeout=15.0,
         )
+        
         assert response.status_code == 200, (
-            f"CDS userinfo returned {response.status_code}. "
-            f"Check COPERNICUS_API_KEY and that CDS terms are accepted. "
+            f"CDS jobs endpoint returned {response.status_code}. "
+            f"Check COPERNICUS_API_KEY and ensure it is valid for the new CDS. "
             f"Body: {response.text[:200]}"
         )
-        # Response must be JSON with a uid field
+        
+        # Validamos que la respuesta sea un JSON válido (suele ser una lista o dict)
         data = response.json()
-        assert "uid" in data or "sub" in data, (
-            f"CDS userinfo response missing uid/sub. Got: {data}"
+        assert isinstance(data, (list, dict)), (
+            f"Expected JSON list or dict from CDS jobs endpoint, got {type(data)}"
         )
 
 

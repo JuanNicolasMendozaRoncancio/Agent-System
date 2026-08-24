@@ -147,7 +147,7 @@ class TestBothProvidersFail:
                 side_effect=Exception("groq_fallback also down"),
             ),
         ):
-            with pytest.raises(RuntimeError, match="Both LLM providers failed"):
+            with pytest.raises(RuntimeError, match="Both Groq models failed"):
                 chat_complete(_MESSAGES)
 
 
