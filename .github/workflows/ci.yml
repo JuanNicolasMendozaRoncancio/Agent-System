@@ -32,10 +32,10 @@ on:
 jobs:
 
   # --------------------------------------------------------------------------
-  # Job 1: LLM unit tests (fully mocked, no API keys)
+  # Job 1: LLM unit tests
   # --------------------------------------------------------------------------
   unit-tests-llm:
-    name: LLM unit tests (mocked)
+    name: LLM unit tests
     runs-on: ubuntu-latest
 
     steps:
