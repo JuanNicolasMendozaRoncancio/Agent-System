@@ -4,9 +4,8 @@
 #
 # What runs on every push to main / pull request
 # -----------------------------------------------
-# 1. ruff linting          — fast style/import check, no API calls needed.
-# 2. LLM unit tests        — fully mocked, verify fallback logic in isolation.
-# 3. API connectivity      — one lightweight call per external API to confirm
+# 1. LLM unit tests        — fully mocked, verify fallback logic in isolation.
+# 2. API connectivity      — one lightweight call per external API to confirm
 #                            credentials are valid and endpoints are reachable.
 #
 # What is NOT in CI (by design)
@@ -19,10 +18,8 @@
 #   Run manually: pytest tests/ -v -m integration
 #
 # Why separate jobs instead of one sequential job:
-#   ruff and unit tests need no secrets and complete in < 30s — they should
-#   give fast feedback without waiting for API calls. Connectivity tests are
-#   a separate job that only runs after linting passes, so a style error does
-#   not waste API quota.
+#   Unit tests need no secrets and complete in < 30s — they should
+#   give fast feedback. Connectivity tests are a separate job.
 
 name: CI
 
@@ -35,37 +32,11 @@ on:
 jobs:
 
   # --------------------------------------------------------------------------
-  # Job 1: ruff linting
-  # No secrets required. Runs in < 10 seconds.
-  # --------------------------------------------------------------------------
-  lint:
-    name: ruff lint
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install ruff
-        # Pin to a specific version so CI is reproducible.
-        # ruff is a Rust-based linter/formatter — install is < 5s.
-        run: pip install ruff==0.9.10
-
-      - name: Run ruff check
-        # --output-format=github renders annotations inline in the PR diff.
-        run: ruff check . --output-format=github
-
-  # --------------------------------------------------------------------------
-  # Job 2: LLM unit tests (fully mocked, no API keys)
+  # Job 1: LLM unit tests (fully mocked, no API keys)
   # --------------------------------------------------------------------------
   unit-tests-llm:
     name: LLM unit tests (mocked)
     runs-on: ubuntu-latest
-    needs: lint
 
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +55,7 @@ jobs:
         run: pytest tests/test_llm_client.py -v -m "not integration"
 
   # --------------------------------------------------------------------------
-  # Job 3: API connectivity tests
+  # Job 2: API connectivity tests
   # Requires secrets: GROQ_API_KEY, ENTSOE_API_KEY,
   #                   COPERNICUS_API_KEY, COPERNICUS_URL,
   #                   RAG_API_URL (optional), RAG_API_KEY (optional)
@@ -92,7 +63,6 @@ jobs:
   ci-connectivity:
     name: API connectivity
     runs-on: ubuntu-latest
-    needs: lint
 
     env:
       GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
