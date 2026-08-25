@@ -5,11 +5,6 @@ Unit tests  : fully mocked — no Redis, no DB.
 Integration : marked @pytest.mark.integration — require Docker running
               with Redis and PostgreSQL live.
 
-Run unit tests only:
-    python -m pytest tests/test_subscriber.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_subscriber.py -v -m integration
 """
 
 from __future__ import annotations
@@ -67,10 +62,7 @@ def _make_dlq_envelope(
 # ===========================================================================
 
 class TestValidateMessage:
-    """
-    _validate_message is a pure function — no mocking needed.
-    It returns a list of missing field names (empty = valid).
-    """
+
 
     def test_valid_payload_returns_empty_list(self):
         from System2.subscriber import _validate_message
@@ -113,10 +105,7 @@ class TestValidateMessage:
 # ===========================================================================
 
 class TestHandleValidatedData:
-    """
-    _handle_validated_data is the core dispatcher.
-    Tests verify filtering, validation, DB write path, and DLQ routing.
-    """
+
 
     def _mock_engine(self):
         mock_conn = MagicMock()
@@ -124,8 +113,6 @@ class TestHandleValidatedData:
         mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
         return mock_engine, mock_conn
-
-    # --- Filtering ---
 
     def test_ignores_non_system1_complete_events(self):
         """Events other than 'system1_complete' must not trigger any DB write."""
@@ -165,8 +152,6 @@ class TestHandleValidatedData:
 
         mock_conn.execute.assert_called_once()
 
-    # --- Malformed input ---
-
     def test_malformed_json_is_dropped_silently(self):
         """Non-JSON input must not raise — it is logged and dropped."""
         mock_engine, mock_conn = self._mock_engine()
@@ -177,8 +162,6 @@ class TestHandleValidatedData:
             _handle_validated_data("not valid json {{{{")
 
         mock_conn.execute.assert_not_called()
-
-    # --- Validation failure → DLQ ---
 
     def test_missing_field_routes_to_dlq(self):
         """A payload missing a required field must be published to the DLQ."""
@@ -202,8 +185,6 @@ class TestHandleValidatedData:
         # DB write must not have been attempted
         mock_conn.execute.assert_not_called()
 
-    # --- DB failure → DLQ ---
-
     def test_db_failure_routes_to_dlq(self):
         """If _write_analysis_trigger raises, the message must go to the DLQ."""
         payload = _make_payload()
@@ -225,12 +206,10 @@ class TestHandleValidatedData:
         assert parsed["retry_count"] == 0
         assert "connection refused" in parsed["error"]
 
-    # --- DLQ publish itself fails ---
-
     def test_dlq_publish_failure_does_not_raise(self):
         """If Redis publish to DLQ also fails, must not raise — log and continue."""
         payload = _make_payload()
-        del payload["run_id"]   # trigger DLQ
+        del payload["run_id"]  
         mock_redis = MagicMock()
         mock_redis.publish.side_effect = Exception("Redis unavailable")
 
@@ -239,7 +218,6 @@ class TestHandleValidatedData:
             patch("System2.subscriber.engine", MagicMock()),
         ):
             from System2.subscriber import _handle_validated_data
-            # Must not raise even when DLQ publish fails
             _handle_validated_data(_raw(payload))
 
 
@@ -452,7 +430,6 @@ class TestHandleFailedMessage:
             patch("System2.subscriber._handle_validated_data"),
         ):
             from System2.subscriber import _handle_failed_message
-            # Must not raise
             _handle_failed_message("not valid json")
 
     def test_retry_success_does_not_republish_to_dlq(self):
@@ -486,10 +463,7 @@ class TestSubscriberIntegration:
     """
 
     def test_handle_system1_complete_writes_to_db(self):
-        """
-        Publishing a valid system1_complete payload and calling the handler
-        must produce a row in analysis_runs with status='triggered'.
-        """
+      
         from shared.db import engine
         from sqlalchemy import text
         from System2.subscriber import _handle_validated_data
@@ -518,10 +492,7 @@ class TestSubscriberIntegration:
             conn.commit()
 
     def test_duplicate_run_id_does_not_raise(self):
-        """
-        ON CONFLICT DO NOTHING: calling the handler twice with the same
-        run_id must not raise — the second call is silently ignored.
-        """
+      
         from shared.db import engine
         from sqlalchemy import text
         from System2.subscriber import _handle_validated_data
@@ -531,7 +502,7 @@ class TestSubscriberIntegration:
         raw = _raw(payload)
 
         _handle_validated_data(raw)
-        _handle_validated_data(raw)  # second call — must not raise
+        _handle_validated_data(raw) 
 
         with engine.connect() as conn:
             count = conn.execute(
@@ -549,10 +520,7 @@ class TestSubscriberIntegration:
             conn.commit()
 
     def test_non_system1_complete_event_not_written(self):
-        """
-        A 'profiling_complete' event on the validated_data channel must not
-        produce any row in analysis_runs.
-        """
+    
         from shared.db import engine
         from sqlalchemy import text
         from System2.subscriber import _handle_validated_data
@@ -571,11 +539,7 @@ class TestSubscriberIntegration:
         assert count == 0
 
     def test_dlq_round_trip(self):
-        """
-        Publishing a malformed payload (missing run_id) and calling the
-        handler must publish exactly one message to the DLQ channel.
-        Verified by subscribing to 'failed_messages' in the test.
-        """
+  
         from shared.redis_client import get_redis
         from System2.subscriber import _handle_validated_data
 
@@ -583,15 +547,13 @@ class TestSubscriberIntegration:
         pubsub = redis_client.pubsub()
         pubsub.subscribe("failed_messages")
 
-        # Drain any existing messages
         for _ in range(5):
             pubsub.get_message(timeout=0.1)
 
         payload = _make_payload()
-        del payload["run_id"]   # intentionally invalid
+        del payload["run_id"]   
         _handle_validated_data(_raw(payload))
 
-        # Wait for the DLQ message to arrive
         dlq_message = None
         for _ in range(20):
             msg = pubsub.get_message(timeout=0.5)

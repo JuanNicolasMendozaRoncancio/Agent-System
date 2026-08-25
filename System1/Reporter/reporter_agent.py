@@ -17,17 +17,6 @@ Responsibilities
 Graph
 -----
 START → reporter_node → save_reporter_node → END
-
-Design rationale
-----------------
-The Reporter is the only agent that holds the complete run context — profile,
-QA anomalies, RCA, provider metadata — because it runs last. That makes it
-the correct place for the integrative LLM call. All previous agents produced
-their own narrower summaries; the Reporter fuses them into one human-readable
-narrative without duplicating any earlier computation.
-
-One LLM call, O(n_countries * n_variables) tokens input, O(1) calls regardless
-of how many anomalies or countries were processed.
 """
 
 from __future__ import annotations
@@ -39,7 +28,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-load_dotenv(encoding="latin-1")
+load_dotenv()
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import text
@@ -87,11 +76,6 @@ End with one sentence on data quality confidence for this run.
 def _build_prompt(state: AgentState) -> str:
     """
     Build a compact input prompt for the Reporter LLM call.
-
-    Why build this in Python rather than passing AgentState directly:
-    AgentState contains nested dicts (profile, drift results, raw records)
-    that would bloat the prompt. We extract only the signals the LLM needs
-    to write a fluent report — roughly 400-700 tokens regardless of run size.
     """
     profile = state.get("profile", {})
     anomalies_raw = state.get("anomalies", [])
@@ -103,10 +87,8 @@ def _build_prompt(state: AgentState) -> str:
     date_to = state.get("date_to")
     run_type = state.get("run_type", "full")
 
-    # Aggregate record count across countries
     total_records = sum(d.get("n_records", 0) for d in profile.values())
 
-    # Summarise anomalies compactly
     anomaly_lines: list[str] = []
     for a in anomalies_raw:
         severity = a.get("severity", "UNKNOWN")
@@ -116,7 +98,6 @@ def _build_prompt(state: AgentState) -> str:
         anomaly_lines.append(f"  - [{severity}] {variable} ({country}): {rule}")
     anomaly_block = "\n".join(anomaly_lines) if anomaly_lines else "  None detected."
 
-    # Drift summary from profile
     drift_lines: list[str] = []
     for country, data in profile.items():
         for var, d in data.get("drift", {}).items():
@@ -175,7 +156,6 @@ def reporter_node(state: AgentState) -> dict:
         logger.info("reporter_node: report generated via %s", provider)
     except Exception as exc:
         logger.error("reporter_node: LLM call failed: %s", exc)
-        # Fallback: structured plain-text report built entirely from AgentState
         profile = state.get("profile", {})
         total_records = sum(d.get("n_records", 0) for d in profile.values())
         report_text = (
@@ -192,20 +172,6 @@ def reporter_node(state: AgentState) -> dict:
 def save_reporter_node(state: AgentState) -> dict:
     """
     Persist the run report and publish the system1_complete event to Redis.
-
-    DB write: UPDATE data_quality_runs SET run_report = :run_report,
-              status = 'complete' WHERE run_id = :run_id.
-    The row was created by save_profile_node (INSERT); this is the final
-    UPDATE that closes the Sistema 1 lifecycle for this run.
-
-    Redis: publishes event 'system1_complete' regardless of DB outcome so
-    Sistema 2 is always notified even when persistence fails.
-
-    Why UPDATE and not INSERT:
-        save_profile_node already created the data_quality_runs row with
-        INSERT. Every subsequent agent (QA, RCA, Reporter) only enriches
-        that same row. A second INSERT would violate the UNIQUE constraint
-        on run_id.
     """
     run_id     = state["run_id"]
     run_report = state.get("run_report", "")
@@ -271,10 +237,6 @@ def build_reporter_graph():
     Compile and return the Reporter Agent as a LangGraph graph.
 
     Graph: START → reporter_node → save_reporter_node → END
-
-    Linear — no conditional edges. The LLM call always runs; if it fails,
-    reporter_node returns a Python-built fallback so save_reporter_node
-    always has something to persist.
     """
     graph = StateGraph(AgentState)
 

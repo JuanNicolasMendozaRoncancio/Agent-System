@@ -25,20 +25,6 @@ Graph
 -----
 START → analysis_node → tool_node → process_evidence_node → save_analysis_node → END
  
-Design rationale
-----------------
-No ReAct loop. Unlike the Ingestion Agent, the Analysis Agent has no uncertainty
-about which tools to call — it always calls all three for every country in the
-run. A single parallel tool-call pass is sufficient. The LLM acts as a lightweight
-orchestrator that emits all tool calls in one response.
- 
-detect_patterns and compute_risk_indicators are deterministic SQL + arithmetic —
-no LLM involvement in the compute loop. Token cost: one LLM call for tool
-dispatch + one save operation. O(1) regardless of record volume.
- 
-The Narrative Agent (Step 15) will read analysis_results from AgentState and
-produce the natural-language summary. This agent writes only structured JSON.
- 
 Risk score components
 ---------------------
 C1 — Demand coverage        30 %  : total_generation / load
@@ -64,7 +50,6 @@ from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from sqlalchemy import text
-from typing_extensions import TypedDict
 
 load_dotenv()
 from shared.db import engine
@@ -206,7 +191,6 @@ def _fetch_records_for_window(
             for r in rows
         ]
  
-        # Compute actual span covered by the fetched data.
         timestamps = [r["timestamp"] for r in records]
         min_ts = min(timestamps)
         max_ts = max(timestamps)
@@ -230,12 +214,6 @@ def _compute_trend(values: list[float]) -> dict[str, float]:
     Returns slope (change per step), mean, min, max, and n.
     Slope is computed as (last_mean - first_mean) / n_points, where first and
     last refer to the first and last third of the series respectively.
- 
-    Why thirds instead of least-squares regression:
-        For short time series (< 10 points) least-squares is numerically unstable
-        and oversensitive to outliers. The thirds method is robust, interpretable,
-        and sufficient to classify a trend as rising / flat / falling for the
-        dashboard display.
     """
     n = len(values)
     if n == 0:
@@ -555,9 +533,6 @@ _TOOLS = [detect_patterns, compute_risk_indicators, rag_context]
 def _build_llm_with_tools():
     """
     Return (llm_with_tools, provider_name).
- 
-    Same model and pattern as all other agents: llama-3.1-8b-instant with
-    parallel_tool_calls=True so all tool calls are emitted in one response.
     """
     from langchain_groq import ChatGroq
  
@@ -602,12 +577,6 @@ def analysis_node(state: AgentState) -> dict:
     Sends the run context (run_id, countries, date window) to the LLM and
     lets it decide which tool calls to emit. Always: detect_patterns and
     compute_risk_indicators for each country + one rag_context call.
- 
-    Why one LLM call and not direct tool invocation:
-        Keeping the LLM as orchestrator maintains consistency with the rest of
-        the pipeline and allows the agent to adapt (e.g. skip a country if
-        the run context indicates no data was ingested for it). The cost is
-        minimal — one call with parallel_tool_calls=True.
     """
     llm_with_tools, provider = _build_llm_with_tools()
  
@@ -651,12 +620,6 @@ def _process_tool_messages(messages: list[BaseMessage]) -> tuple[dict, list[dict
     (analysis_results, rag_topics)
         analysis_results — dict keyed by country with 'patterns' and 'risk' sub-keys.
         rag_topics       — list of topic dicts from rag_context.
- 
-    Why parse in Python and not pass raw ToolMessages to a second LLM call:
-        detect_patterns and compute_risk_indicators return structured dicts that
-        belong in charts_json (PostgreSQL JSONB) — not in an LLM prompt. The
-        Narrative Agent will receive a compact summary, not the raw evidence.
-        This mirrors the _process_rca_evidence pattern from the RCA Agent.
     """
     analysis_results: dict[str, Any] = {}
     rag_topics: list[dict] = []
@@ -696,11 +659,6 @@ def process_evidence_node(state: AgentState) -> dict:
  
     Reads ToolMessages appended by ToolNode, builds analysis_results and
     rag_topics, then clears the message history.
- 
-    Why a separate node:
-        ToolNode appends ToolMessages automatically. This node gives us a clean
-        place to process results without mixing parsing logic into save_analysis_node.
-        Same rationale as _process_rca_evidence in the RCA Agent.
     """
     messages = state.get("messages", [])
     analysis_results, rag_topics = _process_tool_messages(messages)
@@ -728,11 +686,6 @@ def save_analysis_node(state: AgentState) -> dict:
             llm_provider = :llm_provider,
             status = 'analysis_complete'
         WHERE run_id = :run_id
- 
-    Why UPDATE and not INSERT:
-        The subscriber already created the row with status='triggered'. Every
-        subsequent Sistema 2 agent enriches that same row — same pattern as the
-        Sistema 1 QA/RCA/Reporter agents enriching data_quality_runs.
  
     Redis: publishes event 'analysis_complete' regardless of DB outcome so
     downstream agents (Visualization, Narrative) are always notified.
@@ -807,11 +760,6 @@ def save_analysis_node(state: AgentState) -> dict:
 def risk_node(state: AgentState) -> dict:
     """
     Deterministic risk computation node — no LLM involved.
-
-    Why a separate node instead of relying on the LLM tool compute_risk_indicators:
-        The LLM orchestrator consistently emits only one tool call (detect_patterns),
-        skipping compute_risk_indicators. Since risk computation is always mandatory
-        for every country, a deterministic Python node guarantees it runs.
     """
     run_id           = state["run_id"]
     countries        = state.get("countries", [])
@@ -830,11 +778,6 @@ def risk_node(state: AgentState) -> dict:
 def rag_node(state: AgentState) -> dict:
     """
     Deterministic RAG topics node — no LLM involved.
-
-    Why a separate node instead of relying on the LLM tool rag_context:
-        The LLM consistently skips rag_context when it emits only one tool call.
-        RAG topics enrich the Narrative Agent and are always useful when available,
-        so this node fetches them unconditionally in Python.
     """
     if not _RAG_API_URL:
         logger.info("rag_node: RAG_API_URL not set — skipping")
@@ -865,10 +808,6 @@ def build_analysis_graph():
     Graph:
         START → analysis_node → tool_node → process_evidence_node
               → save_analysis_node → END
- 
-    No conditional edges — the agent always runs all tools for all countries.
-    No loop — a single parallel tool-call pass is sufficient because the LLM
-    has no uncertainty about which tools to call.
     """
     tool_node = ToolNode(_TOOLS)
  
@@ -895,8 +834,6 @@ def build_analysis_graph():
 def invoke_analysis_graph(state: AgentState) -> AgentState:
     """
     Invoke the Analysis Agent graph.
- 
-    recursion_limit=10 is generous for a linear 4-node graph with no loops.
     """
     graph = build_analysis_graph()
     return graph.invoke(state)

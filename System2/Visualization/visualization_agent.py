@@ -21,20 +21,6 @@ Graph
 -----
 START → viz_node → save_viz_node → END
 
-Design rationale
-----------------
-No LLM, no tools, no loop. analysis_results already holds all aggregated
-statistics — the only missing piece for the dashboard is the time series,
-which requires one SQL query per country (DATE_TRUNC aggregation). Everything
-else is pure Python reshaping of data already in AgentState.
-
-Granularity is configurable via VIZ_TIME_GRANULARITY in .env so the dashboard
-can switch between hourly detail and daily/weekly summaries without code
-changes. Allowed values: 'hour', 'day', 'week'. Default: 'day'.
-
-The resulting viz_json is stored in analysis_runs.viz_json (separate column
-from charts_json written by the Analysis Agent) so each agent's output is
-independently traceable in the DB.
 """
 from __future__ import annotations
 
@@ -48,7 +34,7 @@ from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import text
 
-load_dotenv(encoding="latin-1")
+load_dotenv()
 
 from shared.db import engine
 from shared.redis_client import CHANNEL_VALIDATED_DATA, get_redis
@@ -60,8 +46,6 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Allowed SQL DATE_TRUNC granularities. Validated at query time to prevent
-# SQL injection — only whitelisted values are accepted.
 _ALLOWED_GRANULARITIES = {"hour", "day", "week"}
 
 VIZ_TIME_GRANULARITY: str = os.getenv(
@@ -113,18 +97,6 @@ def _fetch_time_series(
     current run — same strategy as _fetch_records_for_window in the Analysis
     Agent — so the window is consistent regardless of when the agent runs.
 
-    Why DATE_TRUNC in SQL and not pandas resample in Python:
-        Pushing the aggregation to PostgreSQL avoids transferring raw rows over
-        the network. For 30 days × 18 variables × 2 hourly countries that is
-        ~25,000 rows vs ~360 rows with daily granularity. The DB is faster at
-        this than Python for any realistic record volume.
-
-    Why AVG and not SUM:
-        Variables are instantaneous power measurements (MW, °C, W/m²) — their
-        meaningful aggregate is the average over the period, not the sum.
-        Summing MW readings from different hours would produce a physically
-        meaningless number.
-
     Parameters
     ----------
     countries:
@@ -144,7 +116,6 @@ def _fetch_time_series(
         result[country] = {}
         try:
             with engine.connect() as conn:
-                # Anchor: latest timestamp for this run in the given country.
                 anchor_row = conn.execute(
                     text("""
                         SELECT MAX(timestamp)
@@ -165,7 +136,6 @@ def _fetch_time_series(
                 if anchor_ts.tzinfo is None:
                     anchor_ts = anchor_ts.replace(tzinfo=timezone.utc)
 
-                # granularity is whitelisted — safe to interpolate into SQL.
                 rows = conn.execute(
                     text(f"""
                         SELECT
@@ -181,11 +151,9 @@ def _fetch_time_series(
                     {"country": country, "anchor": anchor_ts},
                 ).fetchall()
 
-            # Group by variable → list of {t, v} dicts
             by_variable: dict[str, list[dict]] = {}
             for row in rows:
                 period, variable, mean_value = row
-                # Convert datetime to ISO string for JSON serialisation
                 t_str = (
                     period.isoformat()
                     if hasattr(period, "isoformat")
@@ -279,11 +247,6 @@ def _build_risk_breakdown(
     - has_temperature_data — whether C4 was active for this country.
     - components     — {component_name: {score, weight}} for C1–C4.
 
-    Why include weights alongside scores:
-        A stacked bar chart needs both to render correctly — the weight
-        determines the bar segment width, the score determines the fill
-        intensity. Keeping them together avoids a join in the Streamlit code.
-
     Returns
     -------
     {country: {total_score, has_temperature_data, components: {name: {score, weight}}}}
@@ -327,8 +290,6 @@ def viz_node(state: AgentState) -> dict:
     2. In-memory — bar_stats, country_comparison, risk_breakdown from
                    analysis_results already in AgentState.
 
-    No LLM call. Pure deterministic Python + one SQL aggregation per country.
-
     Returns
     -------
     dict with key 'viz_data': the complete chart structure for viz_json.
@@ -337,16 +298,12 @@ def viz_node(state: AgentState) -> dict:
     countries        = state.get("countries", [])
     analysis_results = state.get("analysis_results", {})
 
-    # 1. Time series — requires DB query
     time_series = _fetch_time_series(countries, run_id, VIZ_TIME_GRANULARITY)
 
-    # 2. Bar stats — from AgentState
     bar_stats = _build_bar_stats(analysis_results)
 
-    # 3. Country comparison — from AgentState
     country_comparison = _build_country_comparison(analysis_results)
 
-    # 4. Risk breakdown — from AgentState
     risk_breakdown = _build_risk_breakdown(analysis_results)
 
     viz_data: dict[str, Any] = {
@@ -433,12 +390,6 @@ def build_viz_graph():
     Compile and return the Visualization Agent as a LangGraph graph.
 
     Graph: START → viz_node → save_viz_node → END
-
-    Linear — no conditional edges, no loop. viz_node always runs both the
-    DB query and the in-memory transforms. save_viz_node always persists and
-    publishes, even if viz_data is partially populated due to a DB error in
-    _fetch_time_series (the error is logged per country and the rest of the
-    chart structures are still produced).
     """
     graph = StateGraph(AgentState)
 

@@ -3,13 +3,6 @@ Tab 3 — Climate Data.
 
 Displays Copernicus ERA5 climate variables (temperature, solar radiation)
 extracted from analysis_runs.viz_json.bar_stats.
-
-Why filter by prefix instead of a hardcoded list:
-    New Copernicus variables (e.g. wind speed, humidity) could be added
-    to the ingestion pipeline in the future. Filtering by the 'climate_'
-    prefix means this tab picks them up automatically without code changes.
-
-Data source: analysis_runs (direct PostgreSQL read via db.py).
 """
 from __future__ import annotations
 
@@ -58,7 +51,6 @@ def render() -> None:
 
     country_vars = bar_stats.get(selected_country, {})
 
-    # Filter to climate variables only.
     climate_vars = {
         k: v for k, v in country_vars.items()
         if k.startswith(_CLIMATE_PREFIX)

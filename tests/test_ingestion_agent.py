@@ -3,12 +3,6 @@ Tests for System1/Ingestion/ingestion_agent.py
 
 Unit tests  : fully mocked — no network, no DB, no Redis.
 Integration : marked @pytest.mark.integration — require live credentials.
-
-Run unit tests only:
-    python -m pytest tests/test_ingestion_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_ingestion_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -26,13 +20,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 # ---------------------------------------------------------------------------
 
 def _make_state(run_type: str = "full", countries: list[str] | None = None) -> dict:
-    """Return a minimal valid AgentState dict for testing.
-
-    Why a 3-hour window instead of 24h?
-    Groq's free tier caps at 6,000 tokens per minute. A 24h window produces
-    ~200+ records per country which easily exceeds that limit. A 3-hour window
-    produces ~10-20 records — well within the limit — while still exercising
-    the full graph end-to-end.
+    """
+    Return a minimal valid AgentState dict for testing.
     """
     return {
         "run_id":          str(uuid.uuid4()),
@@ -52,11 +41,6 @@ def _make_state(run_type: str = "full", countries: list[str] | None = None) -> d
 def _make_tool_message(name: str, content: dict, tool_call_id: str = "call_1") -> ToolMessage:
     """
     Return a ToolMessage whose content is a JSON-serialised summary dict.
-
-    Why a summary dict and not a list of records?
-    Tools now return only a compact summary to the LLM (fetched, source,
-    dataset, country). Full records go to _record_store. summarize_node
-    reads these summary dicts to build tool_results in AgentState.
     """
     return ToolMessage(
         content=json.dumps(content),
@@ -94,13 +78,6 @@ def _sample_climate_record(country: str = "FR") -> dict:
 # ===========================================================================
 
 class TestIngestionTools:
-    """
-    Why test the tool wrappers separately?
-    The @tool decorator changes the function signature that LangGraph sees.
-    We verify that the wrapper correctly parses ISO strings into datetimes
-    before forwarding to the underlying client, and that it returns a compact
-    summary dict (not the full records list).
-    """
 
     def test_fetch_generation_calls_client(self):
         """fetch_generation parses date strings and delegates to entsoe_client module."""
@@ -197,12 +174,6 @@ class TestIngestionTools:
 # ===========================================================================
 
 class TestIngestionNode:
-    """
-    Why mock the LLM here instead of using a real call?
-    We want to verify graph wiring and state transitions, not LLM behaviour.
-    A real LLM call would make this test slow, flaky, and dependent on API
-    keys being present in CI.
-    """
 
     def _make_ai_with_tools(self, tool_name: str, args: dict) -> AIMessage:
         return AIMessage(
@@ -275,9 +246,7 @@ class TestIngestionNode:
     def test_ingestion_node_retry_cycle_sends_tool_results_summary(self):
         """
         On cycle_count > 0, ingestion_node must build the HumanMessage from
-        state['tool_results'] — not from message history.
-        This is the key invariant of the new architecture: token consumption
-        stays flat because history is never accumulated.
+        state['tool_results'].
         """
         state = _make_state()
         state["cycle_count"] = 1
@@ -302,7 +271,6 @@ class TestIngestionNode:
             if (isinstance(m, dict) and m.get("role") == "user")
             or isinstance(m, HumanMessage)
         )
-        # Must mention the failed tool so the LLM knows what to retry
         assert "fetch_load" in human_content
         assert "FAILED" in human_content or "error" in human_content.lower()
 
@@ -354,13 +322,7 @@ class TestIngestionNode:
 # ===========================================================================
 
 class TestSummarizeNode:
-    """
-    summarize_node is the heart of the new architecture. It must:
-    1. Convert ToolMessages into structured tool_results entries.
-    2. Merge new results with existing ones (for retry cycles).
-    3. Increment cycle_count.
-    4. Clear messages so the next ingestion_node starts with a clean slate.
-    """
+
 
     def test_builds_tool_results_from_tool_messages(self):
         """summarize_node converts ToolMessages into structured tool_results."""
@@ -406,7 +368,7 @@ class TestSummarizeNode:
     def test_clears_messages(self):
         """
         summarize_node must return an empty messages list so the next
-        ingestion_node call starts with a clean slate — no history accumulation.
+        ingestion_node call starts with a clean slate.
         """
         state = _make_state()
         state["messages"] = [
@@ -422,10 +384,6 @@ class TestSummarizeNode:
         assert result["messages"] == []
 
     def test_merges_results_on_retry(self):
-        """
-        On a retry cycle, summarize_node must update failed entries with new
-        results and leave successful entries from previous cycles untouched.
-        """
         state = _make_state()
         # Previous cycle had fetch_generation OK and fetch_load failed
         state["tool_results"] = [
@@ -456,11 +414,6 @@ class TestSummarizeNode:
         assert gen["n_records"] == 48
 
     def test_captures_tool_error_in_tool_results(self):
-        """
-        When a tool raises an exception, ToolNode serializes the error as a
-        string in ToolMessage.content. summarize_node must detect non-JSON
-        content and mark the entry as error.
-        """
         state = _make_state()
         state["messages"] = [
             ToolMessage(
@@ -485,19 +438,6 @@ class TestSummarizeNode:
 # ===========================================================================
 
 class TestSaveNode:
-    """
-    Why patch engine.connect() and get_redis() instead of using a real DB?
-    Unit tests must be deterministic and self-contained. A real DB insert
-    would require Docker to be running, tables to exist, and credentials in
-    the environment. We verify the correct SQL is attempted and the correct
-    Redis message is published.
-
-    Why populate _record_store directly instead of going through tool execution?
-    Tools store records in the in-process _record_store keyed by run_id and
-    return only a short summary dict to the LLM. save_node calls
-    _collect_records(run_id) to retrieve them. Unit tests bypass tool
-    execution entirely and seed the store directly.
-    """
 
     def _state_with_records(self) -> dict:
         """Return a state whose run_id has records pre-seeded in _record_store."""

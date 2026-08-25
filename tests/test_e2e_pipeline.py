@@ -7,7 +7,7 @@ Validates the full Producer-Consumer pipeline as it runs in production:
       → Ingestion, Profiling, QA, RCA, Reporter agents run sequentially
       → Reporter publishes 'system1_complete' to Redis channel 'validated_data'
  
-  _run_validated_data_listener() (daemon thread, started before Sistema 1)
+  _run_validated_data_listener() (daemon thread, started before system 1)
       → Receives 'system1_complete' from Redis
       → Writes analysis_runs trigger row
       → Runs invoke_analysis_graph → invoke_viz_graph → invoke_narrative_graph
@@ -24,33 +24,6 @@ Docker must be running with PostgreSQL and Redis healthy:
 All API keys must be set in .env:
     ENTSOE_API_KEY, COPERNICUS_URL, COPERNICUS_API_KEY,
     GROQ_API_KEY, GEMINI_API_KEY
- 
-Run with:
-    pytest tests/test_e2e_pipeline.py -v -m integration -s
- 
-The -s flag is recommended: Copernicus downloads and LLM calls produce
-informative log output that helps diagnose slow runs.
- 
-Why a 3-hour window for France only
-------------------------------------
-Copernicus ERA5 downloads scale with the time window requested — a 24h
-window can take 3-5 minutes. A 3-hour window keeps the test under the
-5-minute timeout while still exercising both ENTSO-E (generation + load)
-and Copernicus (temperature + solar radiation), which is the most complete
-data path in the system.
- 
-Germany is excluded because Copernicus coverage for DE was not yet
-populated in the DB at the time this test was written. France exercises
-the full four-variable path (generation, load, temperature, solar) and
-is therefore the most representative choice.
- 
-Why daemon=True for the listener thread
-----------------------------------------
-A daemon thread is automatically killed when the pytest process moves on
-to the next test or exits. This is simpler and safer than a manual
-stop mechanism: we do not need to publish a dummy message to unblock
-pubsub.listen(), and we do not risk accidentally triggering the pipeline
-a second time during teardown.
 """
 from __future__ import annotations
 
@@ -131,25 +104,21 @@ def _cleanup(run_id: str) -> None:
 class TestE2EPipeline:
     """
     Full end-to-end test of the Producer-Consumer pipeline.
- 
-    The listener thread is started BEFORE Sistema 1 runs — exactly as in
-    production, where the Sistema 2 subscriber process is already running
-    and waiting before any Sistema 1 run is triggered.
     """
  
-    def test_full_pipeline_sistema1_redis_sistema2(self):
+    def test_full_pipeline_system1_redis_system2(self):
         """
         Validate the complete chain:
-            Sistema 1 (real APIs) → Redis Pub/Sub → Sistema 2 → PostgreSQL
+            system 1 (real APIs) → Redis Pub/Sub → system 2 → PostgreSQL
  
         Assertions
         ----------
-        Sistema 1 side (data_quality_runs):
+        system 1 side (data_quality_runs):
           - Row exists with status = 'complete'
           - run_report is not null and not empty
           - n_records > 0
  
-        Sistema 2 side (analysis_runs):
+        system 2 side (analysis_runs):
           - Row exists with status = 'complete'
           - narrative is not null and not empty
           - viz_json is not null
@@ -167,22 +136,13 @@ class TestE2EPipeline:
         run_id = str(uuid.uuid4())
         logger.info("=== E2E TEST START — run_id=%s ===", run_id)
  
-        # Subscribe to 'validated_data' BEFORE starting anything so we do
-        # not miss any messages published during the pipeline run.
-        # We listen on the same channel the Reporter and all downstream
-        # agents publish to — this is the real production channel.
         redis_client = get_redis()
         pubsub = redis_client.pubsub()
         pubsub.subscribe("validated_data")
  
-        # Drain any stale messages from previous test runs that may still
-        # be buffered in this pubsub connection.
         for _ in range(10):
             pubsub.get_message(timeout=0.1)
  
-        # --- Start the Sistema 2 listener thread ----------------------------
-        # daemon=True: pytest kills this thread automatically when the test
-        # finishes, without any manual stop mechanism needed.
         _stop_event.clear()
         listener_thread = threading.Thread(
             target=_run_validated_data_listener,
@@ -190,14 +150,11 @@ class TestE2EPipeline:
             daemon=True,
         )
         listener_thread.start()
-        logger.info("Sistema 2 listener thread started (daemon=True)")
+        logger.info("system 2 listener thread started (daemon=True)")
  
         try:
-            # --- Run all 5 Sistema 1 agents in sequence --------------------
-            # Ingestion → Profiling → QA → RCA → Reporter.
-            # The Reporter is the last agent and the only one that publishes
-            # 'system1_complete' to Redis, which triggers Sistema 2.
-            logger.info("Starting Sistema 1 — country=FR, window=3h")
+            # --- Run all 5 system 1 agents in sequence --------------------
+            logger.info("Starting system 1 — country=FR, window=3h")
             state = _make_initial_state(run_id)
  
             logger.info("[1/5] IngestionAgent")
@@ -240,7 +197,6 @@ class TestE2EPipeline:
             )
             logger.info("[5/5] ReporterAgent OK — 'system1_complete' published to Redis")
  
-            # --- Poll Redis for 'system1_complete' then 'narrative_complete' 
             logger.info(
                 "Waiting for 'narrative_complete' on Redis "
                 "(max %ds)...", _POLL_ITERATIONS * _POLL_TIMEOUT_S
@@ -261,14 +217,13 @@ class TestE2EPipeline:
                             narrative_received = True
                             break
                     except (json.JSONDecodeError, TypeError):
-                        pass  # ignore non-JSON messages
+                        pass  
  
             assert narrative_received, (
-                "Timed out waiting for 'narrative_complete' from Sistema 2. "
+                "Timed out waiting for 'narrative_complete' from system 2. "
                 "Check logs for pipeline errors."
             )
  
-            # --- DB assertions: Sistema 1 (data_quality_runs) --------------
             with engine.connect() as conn:
                 dq_row = conn.execute(
                     text("""
@@ -297,7 +252,7 @@ class TestE2EPipeline:
                 dq_row[0], dq_row[2],
             )
  
-            # --- DB assertions: Sistema 2 (analysis_runs) ------------------
+            # --- DB assertions: system 2 (analysis_runs) ------------------
             with engine.connect() as conn:
                 ar_row = conn.execute(
                     text("""

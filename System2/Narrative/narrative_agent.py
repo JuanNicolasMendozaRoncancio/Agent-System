@@ -8,19 +8,6 @@ by synthesising three information sources already available in AgentState:
   3. RAG active topics — GET /rag/topics/active (fetched directly in Python,
                          not as an LLM tool — the call is always needed).
  
-Why one LLM call and no tools:
-    The Narrative Agent does not need to decide *what* to retrieve — the data
-    is already in AgentState and the RAG call is unconditional. A tool-based
-    ReAct loop would add latency and token overhead with no benefit. A single
-    chat_complete() call with a compact prompt keeps input at ~600-900 tokens
-    for 2 countries × 5-6 variables, well within Groq's free-tier budget.
- 
-Why the RAG call is in Python, not a @tool:
-    @tool wrappers exist so the LLM can *decide* whether to call something.
-    Here the decision is always yes — active topics always enrich the narrative.
-    Calling httpx directly in narrative_node is cheaper, simpler, and
-    deterministic. Same rationale applied to profiling_node in Sistema 1.
- 
 Graph:
     START → narrative_node → save_narrative_node → END
  
@@ -115,12 +102,6 @@ def _fetch_rag_topics() -> list[dict[str, Any]]:
     Returns an empty list (never raises) when:
       - RAG_API_URL is not configured.
       - The HTTP call fails for any reason.
- 
-    Why httpx.get with a short timeout and no retry:
-        The Narrative Agent is on the critical path of a user-facing dashboard
-        request. A slow or unavailable RAG endpoint should degrade gracefully
-        (narrative without documentary context) rather than block the pipeline.
-        30 s is the same timeout used by the RCA Agent's rag_search tool.
     """
     rag_url = os.getenv("RAG_API_URL", "").rstrip("/")
     rag_key = os.getenv("RAG_API_KEY", "")
@@ -165,12 +146,6 @@ def _build_prompt(
 ) -> str:
     """
     Build a compact prompt from AgentState signals and RAG topics.             
- 
-    What is deliberately excluded:
-      - Full time_series arrays from viz_data (hundreds of data points — the
-        LLM cannot use raw arrays; slopes and means from bar_stats suffice).
-      - Detailed risk component breakdown (already aggregated into risk_score).
-      - Raw records (never enter LLM context in this project).
     """
     lines: list[str] = ["=== ENERGY MARKET SNAPSHOT ===\n"]
 
@@ -302,12 +277,6 @@ def save_narrative_node(state: AgentState) -> dict:
                                  llm_provider = :llm_provider,
                                  status = 'complete'
         WHERE run_id = :run_id
- 
-    The row was created by save_analysis_node (Analysis Agent INSERT).
-    Every downstream Sistema 2 node only UPDATEs — never INSERTs a second row.
- 
-    Redis: publishes narrative_complete regardless of DB outcome so the
-    FastAPI SSE layer is always notified when Sistema 2 finishes.
     """
     run_id       = state["run_id"]
     narrative    = state.get("narrative", "")
@@ -367,10 +336,6 @@ def build_narrative_graph():
     Compile and return the Narrative Agent as a LangGraph graph.
  
     Graph: START → narrative_node → save_narrative_node → END
- 
-    No conditional edges — the graph always runs both nodes. narrative_node
-    handles the LLM failure case by returning a Python-built fallback, so
-    save_narrative_node always has something to persist.
     """
     graph = StateGraph(AgentState)
  

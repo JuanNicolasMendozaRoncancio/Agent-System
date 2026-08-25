@@ -4,12 +4,6 @@ Tests for System1/Profiling/profiling_agent.py
 Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
-
-Run unit tests only:
-    python -m pytest tests/test_profiling_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_profiling_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -48,8 +42,6 @@ def _make_state(
         "profile":         profile or {},
         "profile_summary": "",
         "profiling_error": None,
-        # profiling fields must be present in the initial state dict so
-        # LangGraph can merge node outputs into them correctly
     }
 
 

@@ -16,23 +16,7 @@ Each dict is compatible with the energy_climate_records table schema:
         "unit":       "MW",
         "metadata":   dict,
     }
- 
-Why entsoe-py and not raw httpx + xml.etree
--------------------------------------------
-ENTSO-E returns XML documents with nested IEC-62325 namespaces and time
-series whose resolution varies by country and document type (PT15M or
-PT60M).  Parsing that manually is hundreds of lines of fragile XPath.
-entsoe-py handles all of it and returns pandas.Series indexed by UTC
-timestamp — exactly what we need to produce the flat dicts above.
- 
-Why synchronous (requests-based)
----------------------------------
-LangGraph agent nodes are plain Python functions called synchronously.
-FastAPI wraps them with run_in_executor(), so blocking I/O inside the
-agent thread is safe and correct.  Using an async HTTP client here would
-require asyncio.run() inside the thread, which raises
-"This event loop is already running" in FastAPI's context.
- 
+
 Country codes
 -------------
 Use ENTSO-E area codes, not ISO-2.  The most common ones:
@@ -93,11 +77,6 @@ _PSR_TYPE_NAMES: dict[str, str] = {
 def _get_client():
     """
     Build and return an EntsoePandasClient.
- 
-    Why lazy construction: the client validates the API key on import if
-    we build it at module level.  Lazy construction lets the module import
-    cleanly even when ENTSOE_API_KEY is not set (e.g. in unit tests that
-    mock this function).
     """
     from entsoe import EntsoePandasClient
 
@@ -129,10 +108,6 @@ def _resolve_area(country_code: str) -> str:
 def _to_pandas_timestamp(dt: datetime) -> pd.Timestamp:
     """
     Convert a datetime to a timezone-aware pandas.Timestamp in UTC.
- 
-    Why this conversion: entsoe-py requires pd.Timestamp with tz info.
-    Accepting plain datetime objects in our public API is friendlier for
-    callers (e.g. LangGraph agent nodes that build datetimes from strings).
     """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -148,11 +123,6 @@ def _series_to_records(
     """
     Convert a pandas.Series (index=timestamp, values=float) to a list of
     dicts compatible with energy_climate_records.
- 
-    Why we drop NaN rows: ENTSO-E sometimes returns NaN for hours where
-    a generation type was offline or data was not reported.  Inserting NaN
-    into a DOUBLE PRECISION column raises a psycopg type error, and a
-    missing reading is correctly represented by the absence of a row.
     """
     records: list[dict[str, Any]] = []
     metadata: dict[str, Any] = {"resolution": "inferred", **(extra_metadata or {})}
@@ -263,10 +233,6 @@ def fetch_load(
     ------------------------------------
     Load and generation come from different ENTSO-E document types
     (TotalLoadActual vs GL_Dts_ActualGenerationPerProductionType).
-    Keeping them as separate functions lets callers fetch only what they
-    need — the Ingestion Agent can call both and merge the results, or call
-    only one if the other is temporarily unavailable (e.g. data not yet
-    published for the current hour).
     """
     area = _resolve_area(country_code)
     ts_start = _to_pandas_timestamp(start)

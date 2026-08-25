@@ -70,10 +70,6 @@ def _build_request(
 ) -> dict[str, Any]:
     """
     Build the CDS API request dict for a single variable.
-
-    ERA5 requests require explicit year/month/day/time lists — the API does
-    not accept datetime ranges directly. We derive the unique values from the
-    requested window.
     """
     import pandas as pd
 
@@ -139,8 +135,6 @@ def _netcdf_to_records(
                 f"Available: {available}"
             )
 
-        # Spatial mean over latitude and longitude dimensions
-        # ERA5 dimension names are 'latitude' and 'longitude'
         spatial_dims = [d for d in da.dims if d in ("latitude", "longitude")]
         da_mean = da.mean(dim=spatial_dims)
 
@@ -149,12 +143,11 @@ def _netcdf_to_records(
             value = float(da_mean.sel(valid_time=time_val).values)
 
             if np.isnan(value):
-                continue  # skip missing data
+                continue
 
             if transform is not None:
                 value = transform(value)
 
-            # Convert numpy datetime64 → Python datetime (UTC-aware)
             ts = (
                 datetime.fromtimestamp(
                     (time_val - np.datetime64("1970-01-01T00:00:00")) /
@@ -198,7 +191,6 @@ def _fetch(
     client = _get_client()
     request = _build_request(variable, start, end, country_code)
 
-    # NamedTemporaryFile with delete=False so we control deletion after parsing
     with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -217,7 +209,6 @@ def _fetch(
         return records
 
     finally:
-        # Always clean up the temp file, even on exception
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
@@ -257,7 +248,7 @@ def fetch_temperature(
         country_code=country_code,
         start=start,
         end=end,
-        transform=lambda k: k - 273.15,   # Kelvin → Celsius
+        transform=lambda k: k - 273.15,
     )
 
 

@@ -22,15 +22,6 @@ Responsibilities
 Graph
 -----
 START → qa_node → summary_node → save_qa_node → END
- 
-Design rationale
-----------------
-No LLM in the compute loop. Business rules are exact arithmetic operations —
-Python computes them deterministically and cheaply. Drift is already computed
-by the Profiling Agent and stored in the profile; recomputing it here would
-violate the principle of not calling a service when the result is already
-available in state. The LLM is called exactly once in summary_node to convert
-the structured anomaly list into natural language for the dashboard.
 """
 from __future__ import annotations
 
@@ -84,12 +75,6 @@ class AgentState(_ProfilingState, total=False):
 def _load_rules(path: Path = _RULES_PATH) -> dict:
     """
     Load and return the business rules YAML.
- 
-    Why load at call time and not at module level:
-        Module-level loading runs at import time, which means tests that want
-        to patch the rules file path would need to patch before the import —
-        fragile and order-dependent. Loading inside the function makes the
-        seam clean: patch '_load_rules' directly in tests.
     """
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -103,13 +88,7 @@ def validate_business_rules(
 ) -> list[dict]:
     """
     Check each record against the non-negative variable rules.
- 
-    Why only non-negative rules here and not completeness or drift:
-        Completeness requires knowing the expected record count, which depends
-        on the time window — that belongs in check_completeness(). Drift is
-        already computed in the profile — reading it here avoids recomputation.
-        Keeping each function single-responsibility makes testing exact.
- 
+
     Parameters
     ----------
     records : Raw records from AgentState (energy_climate_records schema).
@@ -152,11 +131,6 @@ def check_completeness(
     Each (country, source_api) pair should produce one record per hour for
     each variable. We count distinct variables per pair and compare against
     the expected hours * n_variables.
- 
-    Why hours and not a fixed count:
-        The time window varies per run (3h incremental vs 24h full). Hardcoding
-        an expected count would break for any window size other than the default.
-        Deriving from the actual window makes the check window-agnostic.
  
     Parameters
     ----------
@@ -237,13 +211,6 @@ def flag_anomalies(
     Consolidate rule violations, drift alerts, and missing variables into a
     uniform anomaly list and compute the maximum severity.
  
-    Why read drift from profile instead of recomputing:
-        The Profiling Agent already computed KL divergence for every
-        variable/country pair and stored the result in AgentState['profile'].
-        Recomputing here would query PostgreSQL again for the same historical
-        data — wasted I/O. The QA Agent's job is to interpret the result,
-        not reproduce it.
- 
     Parameters
     ----------
     rule_violations : Output of validate_business_rules() + check_completeness().
@@ -304,17 +271,13 @@ def qa_node(state: AgentState) -> dict:
  
     Reads from AgentState: records, profile, countries, date_from, date_to.
     Writes to AgentState: anomalies, qa_severity.
- 
-    No LLM call here — all operations are deterministic Python.
     """
     rules   = _load_rules()
     records = state.get("records", [])
     profile = state.get("profile", {})
  
-    # 1. Non-negative rule violations
     rule_violations = validate_business_rules(records, rules)
  
-    # 2. Completeness violations
     completeness_violations = check_completeness(
         records,
         state["countries"],
@@ -323,7 +286,6 @@ def qa_node(state: AgentState) -> dict:
         rules,
     )
  
-    # 3. Consolidate with drift + missing from profile
     anomalies, max_severity = flag_anomalies(
         rule_violations + completeness_violations,
         profile,
@@ -345,10 +307,6 @@ def summary_node(state: AgentState) -> dict:
     """
     Generate a natural-language summary of the QA results for the dashboard.
  
-    Receives only the anomaly list and qa_severity — NOT the raw records.
-    Token cost is proportional to the number of anomalies, not the number
-    of records. For typical runs (0-10 anomalies) this is ~200-400 tokens.
- 
     Returns
     -------
     dict with key 'qa_summary': a short string for the dashboard.
@@ -362,7 +320,6 @@ def summary_node(state: AgentState) -> dict:
             "llm_provider": None,
         }
  
-    # Compact representation — only what the LLM needs to produce the summary.
     compact = {
         "max_severity": qa_severity,
         "n_anomalies":  len(anomalies),
@@ -404,12 +361,6 @@ def save_qa_node(state: AgentState) -> dict:
  
     UPDATEs the existing data_quality_runs row (written by save_profile_node)
     with the final anomaly counts, severity, and summary text.
- 
-    Why UPDATE and not INSERT:
-        save_profile_node already created the row for this run_id with
-        status='completed'. The QA Agent enriches that same row — anomaly
-        counts and RCA text belong together with the profile metadata in a
-        single row per run for clean querying.
     """
     run_id      = state["run_id"]
     anomalies   = state.get("anomalies", [])
@@ -451,7 +402,6 @@ def save_qa_node(state: AgentState) -> dict:
         error_msg = str(exc)
         logger.error("save_qa_node: DB update failed: %s", exc)
  
-    # Publish to Redis regardless of DB outcome
     redis_message = json.dumps({
         "run_id":       run_id,
         "event":        "qa_complete",
@@ -478,10 +428,6 @@ def build_qa_graph():
     Compile and return the QA Agent as a LangGraph graph.
  
     Graph: START → qa_node → summary_node → save_qa_node → END
- 
-    No conditional edges — QA always runs all three steps. Even when there
-    are no anomalies, summary_node produces a 'clean' message for the dashboard
-    and save_qa_node updates the run status.
     """
     graph = StateGraph(AgentState)
  

@@ -10,19 +10,13 @@ How to run
 From the project root:
     streamlit run dashboard/app.py
  
-Tab structure (Master Plan steps 18-19)
+Tab structure
 ---------------------------------------
 Tab 1: Pipeline execution panel — on-demand run with SSE progress.
 Tab 2: European energy market — generation, load, narrative.
 Tab 3: Climate data (Copernicus) — temperature, solar, drought.
 Tab 4: Data quality & risk — anomalies table, risk gauge.
 Tab 5: Agent observability — run metrics, LangSmith link.
- 
-Why a single app.py with tab imports and not multi-page Streamlit:
-    Multi-page apps in Streamlit create separate URL routes and do not share
-    sidebar state without session_state hacks. A single page with st.tabs()
-    keeps the API URL input in the sidebar visible across all tabs and avoids
-    page reloads when switching between views.
 """
 from __future__ import annotations
 
@@ -35,9 +29,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import streamlit as st
-# ---------------------------------------------------------------------------
-# Page config
-# ---------------------------------------------------------------------------
+
 st.set_page_config(
     page_title="Climate & Energy Agent System",
     page_icon="⚡",
@@ -45,9 +37,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------------------------------------------
-# Sidebar — API configuration and health check
-# ---------------------------------------------------------------------------
+
 with st.sidebar:
     st.title("⚡ Climate & Energy")
     st.title("Multi-Agent Monitoring Dashboard")
@@ -75,9 +65,6 @@ with st.sidebar:
     st.caption("System 2: Analysis → Viz → Narrative")
     st.caption("LLM: Groq (primary) · Gemini Flash (fallback)")  
 
-# ---------------------------------------------------------------------------
-# Tabs
-# ---------------------------------------------------------------------------
  
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🚀 Pipeline",

@@ -11,19 +11,6 @@ Docker must be running:
 All API keys must be set in .env:
     ENTSOE_API_KEY, COPERNICUS_URL, COPERNICUS_API_KEY,
     GROQ_API_KEY, GEMINI_API_KEY
-
-Run with:
-    pytest tests/test_api_pipeline.py -v -m integration -s
-
-Why httpx and not requests:
-    FastAPI's TestClient (built on httpx) supports streaming responses
-    natively. iter_lines() reads SSE events as they arrive without buffering
-    the full response — exactly what we need for a long-running SSE stream.
-
-Why iter_lines() and not iter_text():
-    SSE events are newline-delimited. iter_lines() splits on newlines and
-    filters empty lines automatically, giving us one event string per iteration
-    without manual parsing of the double-newline SSE boundary.
 """
 from __future__ import annotations
 
@@ -47,10 +34,6 @@ client = TestClient(app, raise_server_exceptions=True)
 def _parse_events(lines: Iterator[str]) -> list[dict]:
     """
     Parse raw SSE lines into a list of event dicts.
-
-    SSE format: each event is 'data: <json>\n\n'.
-    TestClient.iter_lines() already strips the outer newlines, so we only
-    need to strip the 'data: ' prefix before JSON-parsing.
     """
     events = []
     for line in lines:
@@ -90,10 +73,6 @@ def _cleanup(run_id: str) -> None:
 class TestPipelineRunEndpoint:
     """
     End-to-end tests for POST /pipeline/run.
-
-    Each test makes a real HTTP request to the FastAPI app (via TestClient),
-    reads the full SSE stream, and asserts both the SSE event sequence and
-    the final DB state — same assertions as test_e2e_pipeline.py.
     """
 
     _PAYLOAD = {
@@ -108,7 +87,6 @@ class TestPipelineRunEndpoint:
         with client.stream("POST", "/pipeline/run", json=self._PAYLOAD) as resp:
             assert resp.status_code == 200
             assert "text/event-stream" in resp.headers["content-type"]
-            # Consume stream to avoid broken pipe
             for _ in resp.iter_lines():
                 pass
 
@@ -206,7 +184,6 @@ class TestPipelineRunEndpoint:
         run_id = complete["run_id"]
 
         try:
-            # Sistema 1 — data_quality_runs
             with engine.connect() as conn:
                 dq_row = conn.execute(
                     text("""
@@ -245,7 +222,6 @@ class TestPipelineRunEndpoint:
     def test_event_order_is_sequential(self):
         """
         Agent 'running' must always precede 'done' for the same agent.
-        This validates that the SSE stream is ordered correctly.
         """
         with client.stream("POST", "/pipeline/run", json=self._PAYLOAD) as resp:
             events = _parse_events(resp.iter_lines())

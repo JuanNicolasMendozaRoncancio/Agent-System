@@ -3,14 +3,6 @@ Tab 5 — Agent Observability.
 
 Shows a historical table of pipeline runs with key metrics, a detail
 view for any selected run, and a link to LangSmith for deep tracing.
-
-Data source: data_quality_runs LEFT JOIN analysis_runs via get_recent_runs().
-
-Why LEFT JOIN and not two separate queries:
-    A user looking at run history wants to see both Sistema 1 and Sistema 2
-    status in a single row. LEFT JOIN gives us that without two round-trips
-    to the DB, and handles the case where Sistema 2 has not yet completed
-    for a given run_id.
 """
 from __future__ import annotations
 

@@ -5,10 +5,6 @@ Unit and integration tests for System1/Ingestion/copernicus_client.py.
 Unit tests: 0 network calls — cdsapi.Client and client.retrieve are fully
 mocked. The NetCDF files used for parsing tests are generated in-memory with
 xarray so the actual parsing logic runs against real NetCDF structure.
-
-Integration tests: marked with @pytest.mark.integration — require valid
-COPERNICUS_URL and COPERNICUS_API_KEY in the environment and a live CDS
-connection.
 """
 from __future__ import annotations
 
@@ -34,10 +30,6 @@ def _make_netcdf(
     """
     Write a minimal valid ERA5-shaped NetCDF file to a temp path and return
     the path.
-
-    ERA5 structure: dims = (valid_time, latitude, longitude).
-    Each time step gets a (n_lat x n_lon) grid filled with the corresponding
-    scalar value so that spatial mean == that scalar exactly.
     """
     times = np.array(
         [
@@ -118,7 +110,6 @@ class TestGetClient:
 class TestFetchTemperature:
     """Tests for fetch_temperature() — mocked CDS, real NetCDF parsing."""
 
-    # Kelvin values: 273.15 K == 0 °C, 293.15 K == 20 °C, 303.15 K == 30 °C
     _KELVIN = [273.15, 293.15, 303.15]
     _CELSIUS = [0.0, 20.0, 30.0]
 
@@ -127,7 +118,6 @@ class TestFetchTemperature:
         nc_path =  _make_netcdf("t2m", self._KELVIN)
         mock_client = MagicMock()
 
-        # retrieve() copies our pre-built NetCDF to the target path
         def fake_retrieve(dataset, request, target):
             import shutil
             shutil.copy(nc_path, target)
@@ -188,7 +178,6 @@ class TestFetchTemperature:
 
     def test_nan_values_are_skipped(self, monkeypatch):
         _make_env(monkeypatch)
-        # Middle value is NaN — should produce only 2 records
         nc_path = _make_netcdf("t2m", [273.15, float("nan"), 303.15])
         mock_client = MagicMock()
 
@@ -245,7 +234,6 @@ class TestFetchTemperature:
 class TestFetchSolarRadiation:
     """Tests for fetch_solar_radiation() — J/m² → W/m² conversion."""
 
-    # 3600 J/m² / 3600 s = 1.0 W/m²
     _JOULES = [3600.0, 7200.0, 0.0]
     _WATTS  = [1.0,    2.0,    0.0]
 

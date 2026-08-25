@@ -1,24 +1,13 @@
 """
 Display formatting helpers for the Streamlit dashboard.
- 
-All functions return plain strings or Markdown snippets that Streamlit
-can render with st.write() / st.markdown(). Keeping formatting logic here
-avoids cluttering the tab modules with string-building code and makes
-it easy to tweak icons or colours in one place.
 """
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Icons
-# ---------------------------------------------------------------------------
  
 _ICON_RUNNING = "⏳"
 _ICON_DONE    = "✅"
 _ICON_ERROR   = "❌"
 
-# ---------------------------------------------------------------------------
-# Severity colours (Markdown inline style via HTML)
-# ---------------------------------------------------------------------------
  
 _SEVERITY_COLOUR = {
     "CRITICAL": "#d62728",
@@ -26,10 +15,6 @@ _SEVERITY_COLOUR = {
     "LOW":      "#2ca02c",
 }
 
-# ---------------------------------------------------------------------------
-# LLM provider badge colours
-# ---------------------------------------------------------------------------
- 
 _PROVIDER_COLOUR = {
     "groq":   "#6366f1",   
     "gemini": "#0ea5e9", 

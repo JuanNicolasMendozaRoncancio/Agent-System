@@ -4,12 +4,6 @@ Tests for System2/analysis_agent.py
 Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
-
-Run unit tests only:
-    python -m pytest tests/test_analysis_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_analysis_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -136,7 +130,7 @@ def _make_rag_result(n_topics: int = 2) -> dict:
 
 class TestComputeTrend:
     """
-    _compute_trend is a pure function — no mocking needed.
+    _compute_trend is a pure function
     Tests verify the slope and stats arithmetic.
     """
 
@@ -202,11 +196,6 @@ class TestComputeTrend:
 class TestComputeRiskForCountry:
     """
     Tests for _compute_risk_for_country via patched DB records.
-
-    Why patch _fetch_records_for_window and not engine directly:
-        _fetch_records_for_window is the seam between the risk function and
-        PostgreSQL. Patching it lets us inject controlled record sets without
-        mocking SQL internals.
     """
 
     def _make_records(
@@ -422,7 +411,6 @@ class TestDetectPatternsForCountry:
 class TestProcessToolMessages:
     """
     _process_tool_messages converts ToolMessages into analysis_results + rag_topics.
-    Tests verify parsing and structure without any LLM or DB involvement.
     """
 
     def test_patterns_message_goes_to_analysis_results(self):

@@ -1,25 +1,3 @@
-# .github/workflows/ci.yml
-#
-# Step 24 — GitHub Actions CI pipeline.
-#
-# What runs on every push to main / pull request
-# -----------------------------------------------
-# 1. LLM unit tests        — fully mocked, verify fallback logic in isolation.
-# 2. API connectivity      — one lightweight call per external API to confirm
-#                            credentials are valid and endpoints are reachable.
-#
-# What is NOT in CI (by design)
-# ------------------------------
-# - Full E2E pipeline test (test_e2e_pipeline.py) — excluded because it
-#   downloads ERA5 NetCDF files (30-70s each) and runs all LangGraph agents,
-#   consuming significant Groq TPM and Copernicus quota on every push.
-#   Run manually: pytest tests/test_e2e_pipeline.py -v -m integration -s
-# - Integration tests for individual agents — excluded for the same reason.
-#   Run manually: pytest tests/ -v -m integration
-#
-# Why separate jobs instead of one sequential job:
-#   Unit tests need no secrets and complete in < 30s — they should
-#   give fast feedback. Connectivity tests are a separate job.
 
 name: CI
 
@@ -34,9 +12,6 @@ on:
 
 jobs:
 
-  # --------------------------------------------------------------------------
-  # Job 1: LLM unit tests
-  # --------------------------------------------------------------------------
   unit-tests-llm:
     name: LLM unit tests
     runs-on: ubuntu-latest
@@ -53,16 +28,8 @@ jobs:
         run: pip install pytest python-dotenv groq
 
       - name: Run LLM unit tests
-        # -m "not integration" excludes the real-API integration tests.
-        # These tests mock _call_groq and _call_groq_fallback, so no key needed.
         run: pytest tests/test_llm_client.py -v -m "not integration"
 
-  # --------------------------------------------------------------------------
-  # Job 2: API connectivity tests
-  # Requires secrets: GROQ_API_KEY, ENTSOE_API_KEY,
-  #                   COPERNICUS_API_KEY, COPERNICUS_URL,
-  #                   RAG_API_URL (optional), RAG_API_KEY (optional)
-  # --------------------------------------------------------------------------
   ci-connectivity:
     name: API connectivity
     runs-on: ubuntu-latest
@@ -84,12 +51,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        # Install only what the connectivity tests need — not the full
-        # requirements.txt, which pulls in cdsapi, xarray, netcdf4, etc.
-        # Keeping the install lean makes this job start in < 30 seconds.
         run: pip install pytest httpx python-dotenv groq
 
       - name: Run CI connectivity tests
-        # tests/ci/ has its own conftest.py that suppresses the root 300s
-        # autouse sleep, keeping the total job time under 60 seconds.
         run: pytest tests/ci/ -v -m ci

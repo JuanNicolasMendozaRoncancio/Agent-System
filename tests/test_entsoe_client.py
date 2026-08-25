@@ -3,14 +3,6 @@ Unit tests for sistema1/ingestion/entsoe_client.py.
 
 All tests are mock-based — zero real HTTP calls.
 The integration test (marked 'integration') requires ENTSOE_API_KEY in .env.
-
-Why mock _get_client() and not the HTTP layer
-----------------------------------------------
-_get_client() is the seam between our code and the entsoe-py library.
-Mocking at that level lets us control what query_generation / query_load
-return without needing a real API key or a running server.  Mocking at
-the HTTP layer would require us to construct valid ENTSO-E XML, which is
-brittle and adds no value to these tests.
 """
 
 from __future__ import annotations
@@ -24,12 +16,11 @@ import pandas as pd
 import pytest
 from dotenv import load_dotenv
 
-# Make the module importable from the tests/ directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 load_dotenv()
 
-import System1.Ingestion.entsoe_client as ec  # adjust import path to your project layout
+import System1.Ingestion.entsoe_client as ec 
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +37,7 @@ def _make_generation_df() -> pd.DataFrame:
     )
     return pd.DataFrame(
         {
-            "Solar": [100.0, 200.0, float("nan")],  # NaN row to test filtering
+            "Solar": [100.0, 200.0, float("nan")], 
             "Wind Onshore": [500.0, 600.0, 700.0],
         },
         index=idx,
@@ -196,7 +187,6 @@ class TestFetchGeneration:
         with patch.object(ec, "_get_client", return_value=mock_client):
             result = ec.fetch_generation("FR", self.START, self.END)
 
-        # Only Actual Aggregated values (100, 200) should appear
         values = {r["value"] for r in result}
         assert 100.0 in values
         assert 200.0 in values
@@ -211,8 +201,6 @@ class TestFetchGeneration:
     def test_missing_api_key_raises_environment_error(self):
         """If ENTSOE_API_KEY is unset, _get_client must raise EnvironmentError."""
         with patch.dict(os.environ, {}, clear=True):
-            # We call _get_client directly — it must fail before any HTTP call.
-            # We need entsoe-py importable for this test.
             try:
                 from entsoe import EntsoePandasClient  # noqa: F401
                 with pytest.raises(EnvironmentError, match="ENTSOE_API_KEY"):
@@ -290,7 +278,6 @@ class TestEntsoEIntegration:
         result = ec.fetch_generation("FR", start, end)
 
         assert len(result) > 0
-        # Must contain at least one solar record (France has solar in June)
         variables = {r["variable"] for r in result}
         assert any("solar" in v for v in variables), (
             f"Expected at least one solar variable, got: {variables}"

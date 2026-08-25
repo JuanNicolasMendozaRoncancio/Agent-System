@@ -6,18 +6,6 @@ Public interface
 iter_pipeline_events(api_url, payload) -> Iterator[dict]
     Opens a streaming POST request to /pipeline/run and yields one parsed
     dict per SSE event until the stream closes.
- 
-Why requests.post(stream=True) and not httpx async:
-    Streamlit runs each user interaction in a blocking thread. There is no
-    running event loop to attach an async client to without spinning up a
-    new one via asyncio.run(), which adds complexity for zero benefit here.
-    requests with stream=True blocks the Streamlit thread intentionally —
-    that is the correct behaviour while the user waits for pipeline progress.
- 
-Why iter_lines() and not iter_content():
-    SSE events are newline-delimited text. iter_lines() splits on b'\n',
-    decodes bytes to str, and filters empty lines automatically, giving one
-    raw SSE line per iteration without manual boundary parsing.
 """
 from __future__ import annotations
 

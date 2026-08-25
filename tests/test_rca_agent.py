@@ -4,12 +4,6 @@ Tests for System1/RCA/rca_agent.py
 Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
-
-Run unit tests only:
-    python -m pytest tests/test_rca_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_rca_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -96,10 +90,6 @@ def _make_ai_no_tools(text: str = "No anomalies.") -> AIMessage:
 # ===========================================================================
 
 class TestFilterRcaAnomalies:
-    """
-    _filter_rca_anomalies is a pure function — tests here are exhaustive
-    and require no mocking.
-    """
 
     def test_keeps_medium_and_critical(self):
         from System1.RCA.rca_agent import _filter_rca_anomalies
@@ -132,11 +122,6 @@ class TestFilterRcaAnomalies:
 # ===========================================================================
 
 class TestProcessToolMessages:
-    """
-    _process_tool_messages converts ToolMessages into the rca_evidence dict.
-    Tests here verify the parsing and deduplication logic in Python, without
-    any LLM involvement.
-    """
 
     def test_historical_message_populates_evidence(self):
         from System1.RCA.rca_agent import _process_tool_messages
@@ -193,7 +178,6 @@ class TestProcessToolMessages:
             "error": None,
         }, "call_2")
         evidence = _process_tool_messages([msg1, msg2])
-        # Higher-score duplicate wins; only one entry kept
         assert len(evidence["rag_results"]) == 1
         assert evidence["rag_results"][0]["score"] == 0.91
 
@@ -206,7 +190,6 @@ class TestProcessToolMessages:
             tool_call_id="call_err",
         )
         evidence = _process_tool_messages([msg])
-        # Should produce empty evidence without raising
         assert evidence["historical"] == {}
 
     def test_multiple_tool_types_in_one_call(self):
@@ -238,12 +221,6 @@ class TestProcessToolMessages:
 # ===========================================================================
 
 class TestRcaNode1:
-    """
-    rca_node1 must call the LLM with tools and return an AIMessage.
-    Tests verify that it filters anomalies, passes the correct context,
-    and handles the no-anomaly case without calling the LLM.
-    """
-
     def test_no_anomalies_skips_llm(self):
         """If no MEDIUM/CRITICAL anomalies exist, rca_node1 must not call the LLM."""
         state = _make_state(anomalies=[_make_anomaly("LOW")])
@@ -324,7 +301,6 @@ class TestRcaNode1:
             for m in call_messages
             if hasattr(m, "content") or isinstance(m, dict)
         )
-        # CRITICAL anomaly variable must be in prompt
         assert "load_actual_aggregated" in full_prompt
 
 
@@ -333,10 +309,6 @@ class TestRcaNode1:
 # ===========================================================================
 
 class TestProcessRcaEvidence:
-    """
-    _process_rca_evidence reads ToolMessages from state['messages'],
-    builds rca_evidence, clears messages, and preserves rca_sources.
-    """
 
     def test_builds_evidence_from_tool_messages(self):
         state = _make_state()
@@ -496,10 +468,6 @@ class TestRcaNode2:
 # ===========================================================================
 
 class TestSaveRcaNode:
-    """
-    save_rca_node must UPDATE data_quality_runs and publish to Redis.
-    Tests verify behaviour under both success and failure conditions.
-    """
 
     def _mock_engine_and_redis(self):
         mock_conn   = MagicMock()
@@ -613,10 +581,6 @@ class TestSaveRcaNode:
 # ===========================================================================
 
 class TestQueryHistoricalDb:
-    """
-    query_historical_db is a @tool wrapping SQL queries. We patch the engine
-    at module level to avoid requiring a live DB.
-    """
 
     def _mock_engine(self, stat_row, anomaly_count: int = 0):
         mock_conn   = MagicMock()
@@ -670,10 +634,6 @@ class TestQueryHistoricalDb:
 # ===========================================================================
 
 class TestRagSearch:
-    """
-    rag_search wraps an httpx.get call. We patch httpx to avoid real HTTP.
-    """
-
     def _mock_httpx_response(self, results: list[dict]) -> MagicMock:
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"query": "test", "returned": len(results),
@@ -762,12 +722,6 @@ class TestRagSearch:
 
 @pytest.mark.integration
 class TestRcaIntegration:
-    """
-    End-to-end run of the RCA Agent graph.
-    Requires: GROQ_API_KEY, PostgreSQL + Redis running.
-    RAG integration is optional — if RAG_API_URL is not set, rag_search
-    returns empty results and reasoning continues normally.
-    """
 
     def _make_integration_state(self, severity: str = "CRITICAL") -> dict:
         state = _make_state(anomalies=[_make_anomaly(severity)])

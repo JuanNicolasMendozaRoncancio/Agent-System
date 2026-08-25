@@ -5,11 +5,6 @@ Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
 
-Run unit tests only:
-    python -m pytest tests/test_narrative_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_narrative_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -29,10 +24,6 @@ import pytest
 def _make_analysis_results(countries: list[str] | None = None) -> dict:
     """
     Return a synthetic analysis_results dict matching the Analysis Agent output.
-
-    Structure mirrors what detect_patterns() + compute_risk_indicators()
-    produce: one entry per country with risk_score, risk_level, fallback_used,
-    and patterns (trend_7d + anomaly_flags).
     """
     countries = countries or ["FR", "DE"]
     results = {}
@@ -64,9 +55,6 @@ def _make_analysis_results(countries: list[str] | None = None) -> dict:
 def _make_viz_data(countries: list[str] | None = None) -> dict:
     """
     Return a synthetic viz_data dict matching the Visualization Agent output.
-
-    We only use bar_stats in the Narrative Agent — time_series and other
-    sections are present but not read.
     """
     countries = countries or ["FR", "DE"]
     bar_stats = {}
@@ -116,7 +104,6 @@ def _make_state(
     """Return a minimal valid AgentState for narrative tests."""
     countries = countries or ["FR", "DE"]
     return {
-        # Inherited from Sistema 2 chain
         "run_id":           str(uuid.uuid4()),
         "countries":        countries,
         "date_from":        datetime(2024, 6, 1, 0, tzinfo=timezone.utc),
@@ -124,21 +111,18 @@ def _make_state(
         "run_type":         "full",
         "triggered_by":     "system1_complete",
         "messages":         [],
-        # Analysis Agent outputs
         "analysis_results": (
             analysis_results
             if analysis_results is not None
             else _make_analysis_results(countries)
         ),
         "analysis_error":   None,
-        # Visualization Agent outputs
         "viz_data":         (
             viz_data
             if viz_data is not None
             else _make_viz_data(countries)
         ),
         "viz_error":        None,
-        # Narrative Agent outputs (initially empty)
         "narrative":        "",
         "narrative_error":  None,
         "llm_provider":     None,
@@ -151,9 +135,7 @@ def _make_state(
 
 class TestFetchRagTopics:
     """
-    _fetch_rag_topics is a plain Python function (not a @tool). Tests verify
-    that it returns correct data when RAG is available and fails gracefully
-    when it is not. No LLM involvement.
+    _fetch_rag_topics is a plain Python function (not a @tool).
     """
 
     def test_returns_empty_when_rag_url_not_set(self, monkeypatch):
@@ -271,7 +253,7 @@ class TestBuildPrompt:
         prompt   = _build_prompt(analysis, viz, [])
 
         assert "FR" in prompt
-        assert "MEDIUM" in prompt   # risk_level for FR in our helper
+        assert "MEDIUM" in prompt 
 
     def test_contains_trend_direction(self):
         """Prompt must include trend direction from patterns.trend_7d."""
@@ -299,7 +281,6 @@ class TestBuildPrompt:
         """
         from System2.Narrative.narrative_agent import _build_prompt
         viz = _make_viz_data(["FR"])
-        # Inject a sentinel into time_series that should never reach the prompt
         viz["time_series"] = {"FR": {"generation_solar": [{"t": "SENTINEL_TS", "v": 1}]}}
         prompt = _build_prompt(_make_analysis_results(["FR"]), viz, [])
         assert "SENTINEL_TS" not in prompt
@@ -321,7 +302,6 @@ class TestBuildPrompt:
     def test_fallback_used_note_present_for_country(self):
         """When fallback_used=True for a country, prompt must note it."""
         from System2.Narrative.narrative_agent import _build_prompt
-        # DE has fallback_used=True in our helper
         analysis = _make_analysis_results(["FR", "DE"])
         prompt   = _build_prompt(analysis, _make_viz_data(["FR", "DE"]), [])
         assert "Copernicus" in prompt or "fallback" in prompt.lower()
@@ -680,8 +660,6 @@ class TestNarrativeIntegration:
     Requires: GROQ_API_KEY, PostgreSQL + Redis running.
     RAG integration is optional — if RAG_API_URL is not set, the narrative
     proceeds without documentary context.
-
-    Inserts a minimal analysis_runs row before the test and cleans up after.
     """
 
     def _insert_analysis_run(self, run_id: str) -> None:

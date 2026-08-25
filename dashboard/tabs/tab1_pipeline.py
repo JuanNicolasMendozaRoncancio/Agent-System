@@ -4,32 +4,6 @@ Tab 1 — Pipeline Execution Panel.
 Renders a form to configure and trigger the full Producer-Consumer pipeline
 via POST /pipeline/run. Progress is streamed as SSE events and displayed
 incrementally using st.status() + st.write(), one line per event.
- 
-Display pattern
----------------
-Each SSE event appends a new line inside the st.status() expander:
- 
-    ⏳ Ingestion — running
-    ✅ Ingestion — done  (4.2 s · 48 records)
-    ⏳ Profiling — running
-    ✅ Profiling — done  (2.1 s · 3 anomalies)
-    ...
-    ✅ Narrative — done
- 
-Lines are never edited once written. This makes the log easy to read and
-faithfully reflects the chronological order of SSE events.
- 
-Why st.status() and not st.expander():
-    st.status() has built-in running/complete/error visual states —
-    the spinner turns into a checkmark or an X automatically when we
-    call status.update(state=...). st.expander() is static and would
-    require manual icon management.
- 
-Why st.write() inside status and not st.markdown():
-    st.write() auto-detects Markdown and renders it inline. For lines that
-    need HTML (severity badge colour), agent_done_line() returns HTML that
-    must be rendered with st.markdown(unsafe_allow_html=True). We check for
-    '<' in the line to decide which call to make.
 """
 from __future__ import annotations
 
@@ -47,7 +21,7 @@ from dashboard.utils.formating import(
 from dashboard.utils.see_client import iter_pipeline_events
 
 # ---------------------------------------------------------------------------
-# Defaults — must match api/main.py PipelineRunRequest defaults
+# Defaults
 # ---------------------------------------------------------------------------
  
 _DEFAULT_COUNTRIES  = ["FR"]
@@ -96,10 +70,6 @@ def _build_payload(
 def _run_pipeline(api_url: str, payload: dict) -> None:
     """
     Stream the pipeline SSE events and render progress inside st.status().
- 
-    Opens a single st.status() expander that transitions from 'running'
-    to 'complete' or 'error' when the stream ends. Each SSE event appends
-    one line; nothing is ever overwritten.
     """
     with st.status("Pipeline running...", expanded=True) as status:
         pipeline_failed = False
@@ -154,7 +124,7 @@ def _run_pipeline(api_url: str, payload: dict) -> None:
             )
 
 # ---------------------------------------------------------------------------
-# Public render function — called from app.py
+# Public render function
 # ---------------------------------------------------------------------------
  
 def render(api_url: str = _DEFAULT_API_URL) -> None:

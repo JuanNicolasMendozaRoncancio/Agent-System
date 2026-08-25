@@ -5,11 +5,6 @@ Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
 
-Run unit tests only:
-    python -m pytest tests/test_reporter_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_reporter_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -101,12 +96,7 @@ def _make_state(
 # ===========================================================================
 
 class TestBuildPrompt:
-    """
-    Why test _build_prompt in isolation?
-    It is pure Python — no LLM, no DB. Verifying its output ensures the
-    LLM always receives the right signals without needing to make a real
-    LLM call in these tests.
-    """
+
 
     def test_contains_countries(self):
         """Prompt must mention all countries in the run."""
@@ -172,7 +162,6 @@ class TestBuildPrompt:
         from System1.Reporter.reporter_agent import _build_prompt
         state = _make_state()
         prompt = _build_prompt(state)
-        # FR=12 + DE=10 = 22
         assert "22" in prompt
 
 
@@ -181,13 +170,6 @@ class TestBuildPrompt:
 # ===========================================================================
 
 class TestReporterNode:
-    """
-    Why mock chat_complete and not _call_groq directly?
-    reporter_node calls chat_complete() — the public interface of llm_client.
-    Mocking at that level verifies the node uses the shared client without
-    coupling the test to provider internals.
-    """
-
     def test_returns_run_report_string(self):
         """reporter_node must return a non-empty run_report string."""
         state = _make_state()
@@ -273,7 +255,6 @@ class TestReporterNode:
             from System1.Reporter.reporter_agent import reporter_node
             result = reporter_node(state)
 
-        # FR=12 + DE=10 = 22 total records
         assert "22" in result["run_report"]
 
 
@@ -282,13 +263,6 @@ class TestReporterNode:
 # ===========================================================================
 
 class TestSaveReporterNode:
-    """
-    Why patch engine.connect and get_redis?
-    save_reporter_node has two external dependencies. Patching at the engine
-    level lets us verify the correct SQL UPDATE is attempted and the correct
-    Redis event is published without requiring live services.
-    """
-
     def _mock_engine_and_redis(self):
         mock_conn   = MagicMock()
         mock_engine = MagicMock()
@@ -438,14 +412,6 @@ class TestSaveReporterNode:
 
 @pytest.mark.integration
 class TestReporterIntegration:
-    """
-    End-to-end run of the Reporter Agent graph.
-    Requires: GROQ_API_KEY, PostgreSQL + Redis running, and a pre-existing
-    data_quality_runs row for the run_id (normally created by save_profile_node).
-
-    For standalone testing, the test inserts its own row first and cleans up
-    afterward.
-    """
 
     def test_full_reporter_run(self):
         """Reporter must produce a non-empty run_report and no reporter_error."""

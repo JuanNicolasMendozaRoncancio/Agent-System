@@ -4,12 +4,6 @@ Tests for System1/QA/qa_agent.py
 Unit tests  : fully mocked — no network, no DB, no Redis, no LLM calls.
 Integration : marked @pytest.mark.integration — require live credentials
               and Docker running.
-
-Run unit tests only:
-    python -m pytest tests/test_qa_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_qa_agent.py -v -m integration
 """
 
 from __future__ import annotations
@@ -132,12 +126,6 @@ _MINIMAL_RULES = {
 # ===========================================================================
 
 class TestValidateBusinessRules:
-    """
-    Why test validate_business_rules in isolation?
-    It is a pure function — no I/O, no state. Exhaustive unit tests here give
-    fast, precise feedback on the rule logic without any graph machinery.
-    """
-
     def test_no_violations_for_positive_values(self):
         """Positive values on non-negative variables must produce no violations."""
         from System1.QA.qa_agent import validate_business_rules
@@ -199,13 +187,6 @@ class TestValidateBusinessRules:
 # ===========================================================================
 
 class TestCheckCompleteness:
-    """
-    Why test completeness separately?
-    The ratio arithmetic and threshold logic are independent of the other
-    QA checks. Isolating it makes it easy to verify edge cases (single hour
-    window, missing pair entirely, exact threshold boundaries).
-    """
-
     _DATE_FROM = datetime(2024, 6, 1, 0, tzinfo=timezone.utc)
     _DATE_TO   = datetime(2024, 6, 1, 3, tzinfo=timezone.utc)  # 3-hour window
 
@@ -271,7 +252,6 @@ class TestCheckCompleteness:
     def test_multiple_countries_checked_independently(self):
         """Each country must be evaluated independently."""
         from System1.QA.qa_agent import check_completeness
-        # FR has 3 records (full), DE has 1 record (critical)
         records = (
             _make_records("FR", "generation_solar", n=3)
             + _make_records("DE", "generation_solar", n=1)
@@ -289,12 +269,6 @@ class TestCheckCompleteness:
 # ===========================================================================
 
 class TestFlagAnomalies:
-    """
-    Why test flag_anomalies separately?
-    It consolidates three input sources (rule violations, drift, missing vars).
-    Testing each combination separately ensures the merge logic is correct
-    without needing to run the full qa_node.
-    """
 
     def test_no_inputs_returns_empty_and_none_severity(self):
         """Empty violations + clean profile → empty anomaly list, None severity."""
@@ -368,12 +342,6 @@ class TestFlagAnomalies:
 # ===========================================================================
 
 class TestQaNode:
-    """
-    Why mock _load_rules?
-    qa_node reads the YAML file from disk. Mocking the loader decouples the
-    test from the filesystem and lets us inject controlled rule sets.
-    """
-
     def test_clean_run_produces_no_anomalies(self):
         """A clean batch with a clean profile must produce an empty anomaly list."""
         state = _make_state(

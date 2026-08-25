@@ -18,14 +18,6 @@ Responsibilities
 Graph
 -----
 START → profiling_node → summary_node → save_profile_node → END
-
-Design rationale
-----------------
-No LLM in the compute loop. Schema diff, distribution stats, and KL
-divergence are deterministic mathematical operations — Python computes them
-exactly and cheaply. The LLM is called exactly once in summary_node, receives
-only the aggregated profile dict (~500 tokens), and produces a short
-natural-language summary for the dashboard. Records never enter LLM context.
 """
 
 from __future__ import annotations
@@ -51,22 +43,14 @@ from shared.db import engine
 from shared.llm_client import chat_complete
 from shared.redis_client import CHANNEL_VALIDATED_DATA, get_redis
 
-# Re-use the same in-process record store written by the Ingestion Agent.
 from System1.Ingestion.ingestion_agent import AgentState as _IngestionState, _record_store
 from langchain_core.messages import BaseMessage
-from typing import Annotated
 from langgraph.graph.message import add_messages
 
 
 class AgentState(_IngestionState, total=False):
     """
     Extends the Ingestion AgentState with fields written by the Profiling Agent.
-
-    Why extend instead of redefine:
-        AgentState is the shared state for the entire System 1 graph. Each
-        agent adds its own output fields without touching the fields of others.
-        Extending via inheritance keeps each step's additions co-located with
-        the agent that owns them.
     """
     profile:         dict          # structured profile — output of profiling_node
     profile_summary: str           # LLM summary — output of summary_node
@@ -78,24 +62,12 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-# KL divergence threshold for drift detection.
-# Configurable via .env so it can be tuned per deployment without code changes.
-# Default 0.1 is a standard starting point in data quality literature.
-# Note: KL divergence is unbounded above — 0.1 is not "10%" but a relative
-# measure of how much information is lost when approximating P with Q.
 KL_DRIFT_THRESHOLD = float(os.getenv("KL_DRIFT_THRESHOLD", "0.1"))
 
-# Minimum number of historical records required to compute a meaningful
-# baseline distribution. Below this, drift detection is skipped for that
-# variable/country pair.
 MIN_HISTORICAL_RECORDS = int(os.getenv("MIN_HISTORICAL_RECORDS", "10"))
 
-# Number of bins used to discretize continuous distributions before computing
-# KL divergence. More bins = finer resolution but more sensitivity to noise.
 N_BINS = int(os.getenv("KL_N_BINS", "20"))
 
-# Expected variables per source API and run type.
-# Used by compute_schema_diff to identify missing or unexpected variables.
 _EXPECTED_VARIABLES: dict[str, dict[str, list[str]]] = {
     "full": {
         "entsoe":     ["load_actual_aggregated"],   # generation_* checked by prefix
@@ -106,8 +78,6 @@ _EXPECTED_VARIABLES: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# Generation variable prefix — any variable starting with this is expected
-# for ENTSO-E in both run types.
 _GENERATION_PREFIX = "generation_"
 
 
@@ -137,13 +107,6 @@ def compute_schema_diff(
     dict with keys:
         'missing'    — expected variables not present in the batch.
         'unexpected' — variables present but not in the expected set.
-
-    Why prefix matching for generation variables:
-        ENTSO-E returns a variable per production type (generation_solar,
-        generation_wind_onshore, etc.) and the exact set depends on the
-        country's energy mix. We only require at least one generation_*
-        variable, not a specific list, to avoid false positives when a
-        country has no offshore wind capacity.
     """
     present_by_source: dict[str, set[str]] = defaultdict(set)
     for rec in records:
@@ -156,18 +119,15 @@ def compute_schema_diff(
     for source, expected_vars in expected.items():
         present = present_by_source.get(source, set())
 
-        # Check each explicitly expected variable
         for var in expected_vars:
             if var not in present:
                 missing.append(f"{source}:{var}")
 
-        # For ENTSO-E, require at least one generation_* variable
         if source == "entsoe":
             has_generation = any(v.startswith(_GENERATION_PREFIX) for v in present)
             if not has_generation:
                 missing.append("entsoe:generation_*")
 
-    # Flag variables present but not in any expected source
     all_expected_sources = set(expected.keys())
     for source, vars_present in present_by_source.items():
         if source not in all_expected_sources:
@@ -199,10 +159,6 @@ def compute_distribution_stats(
     -------
     dict keyed by variable name, each value a stats dict:
         {mean, std, min, max, p25, p50, p75, n}
-
-    Why numpy for percentiles and not statistics.quantiles:
-        numpy.percentile is faster, handles edge cases (n=1, all-same values)
-        consistently, and is already a dependency via scipy.
     """
     values_by_variable: dict[str, list[float]] = defaultdict(list)
     for rec in records:
@@ -238,27 +194,6 @@ def detect_drift(
     Compares the current batch distribution against a historical baseline
     drawn from the same day-of-week and hour window in PostgreSQL.
 
-    Why same day-of-week + hour baseline:
-        Energy generation and demand follow strong weekly and daily seasonality.
-        Comparing Tuesday noon solar generation against a Monday midnight
-        baseline would produce false drift alerts. Conditioning on day-of-week
-        and hour makes the comparison seasonality-aware.
-
-    Why KL divergence and not a statistical test (KS, chi-squared):
-        KL divergence measures the information loss when approximating the
-        historical distribution with the current one — directly interpretable
-        as "how surprising is this batch given what we've seen before". KS
-        tests require large samples to be reliable; chi-squared requires
-        careful bin choice. KL with a fixed bin scheme is simpler and more
-        stable for the record volumes we expect (~10-200 per variable).
-
-    Why scipy.stats.entropy(p, q):
-        entropy(p, q) computes sum(p * log(p/q)) — the standard KL(P||Q).
-        With two arguments it computes cross-entropy minus entropy, which
-        equals KL divergence. We add a small epsilon to both distributions
-        before normalizing to avoid division-by-zero when a bin has zero
-        historical count (Laplace smoothing).
-
     Parameters
     ----------
     records:
@@ -289,10 +224,6 @@ def detect_drift(
             "threshold_used": KL_DRIFT_THRESHOLD, "skipped": True,
             "skip_reason": "no current records for variable",
         }
-
-    # --- Fetch historical baseline from PostgreSQL --------------------------
-    # Use timestamps from the current batch to determine the day-of-week and
-    # hour range for the historical query.
     current_timestamps = [
         r["timestamp"] for r in records
         if r["variable"] == variable and r.get("timestamp")
@@ -301,8 +232,7 @@ def detect_drift(
     historical_values: list[float] = []
 
     if current_timestamps:
-        # Extract unique (day_of_week, hour) pairs from current batch
-        # to use as the seasonality conditioning key.
+
         try:
             sample_ts = current_timestamps[0]
             if isinstance(sample_ts, str):
@@ -344,15 +274,13 @@ def detect_drift(
             "skip_reason": f"insufficient history ({len(historical_values)} < {MIN_HISTORICAL_RECORDS})",
         }
 
-    # --- Discretize both distributions into the same bin edges --------------
-    # Use the combined range so both distributions share identical bins.
+
     combined = np.array(current_values + historical_values)
     bin_edges = np.linspace(combined.min(), combined.max(), N_BINS + 1)
 
     p_current, _    = np.histogram(current_values,    bins=bin_edges, density=False)
     p_historical, _ = np.histogram(historical_values, bins=bin_edges, density=False)
 
-    # Laplace smoothing: add epsilon to avoid log(0) in KL computation.
     eps = 1e-10
     p_current    = (p_current    + eps) / (p_current.sum()    + eps * N_BINS)
     p_historical = (p_historical + eps) / (p_historical.sum() + eps * N_BINS)
@@ -383,9 +311,7 @@ def profiling_node(state: AgentState) -> dict:
     """
     Compute schema diff, distribution stats, and drift for all countries.
 
-    Reads records from _record_store[run_id] — the same in-process store
-    written by the Ingestion Agent's tool functions. Records never pass
-    through LLM context.
+    Reads records from _record_store[run_id]
 
     Returns
     -------
@@ -400,7 +326,6 @@ def profiling_node(state: AgentState) -> dict:
         logger.warning("profiling_node: no records found in store for run_id=%s", run_id)
         return {"profile": {}}
 
-    # Group records by country for per-country computation
     by_country: dict[str, list[dict]] = defaultdict(list)
     for rec in records:
         by_country[rec["country"]].append(rec)
@@ -410,13 +335,10 @@ def profiling_node(state: AgentState) -> dict:
     for country, country_records in by_country.items():
         logger.info("Profiling country=%s (%d records)", country, len(country_records))
 
-        # 1. Schema diff
         schema = compute_schema_diff(country_records, run_type, country)
 
-        # 2. Distribution stats
         stats = compute_distribution_stats(country_records, country)
 
-        # 3. Drift detection — one call per variable
         drift: dict[str, dict] = {}
         for variable in stats:
             drift[variable] = detect_drift(
@@ -440,8 +362,7 @@ def summary_node(state: AgentState) -> dict:
 
     The LLM receives only the aggregated profile dict — no raw records.
     Token cost is proportional to the number of countries × variables, not
-    to the number of records. For 2 countries × 10 variables this is ~400-600
-    tokens input, well within the free-tier budget.
+    to the number of records.
 
     Returns
     -------
@@ -452,9 +373,6 @@ def summary_node(state: AgentState) -> dict:
     if not profile:
         return {"profile_summary": "No data available to profile.", "llm_provider": None}
 
-    # Build a compact representation of the profile for the LLM.
-    # We strip the full stats dict and send only the signals that matter:
-    # missing variables, drift flags, and record counts.
     compact: dict[str, Any] = {}
     for country, data in profile.items():
         drift_alerts = [
@@ -502,12 +420,6 @@ def save_profile_node(state: AgentState) -> dict:
         run_id, started_at, completed_at, source_api, n_records,
         n_anomalies, anomalies (JSONB), rca_result (summary text),
         llm_provider, status.
-
-    Why reuse data_quality_runs for the profile:
-        The table already has the right shape — it tracks per-run quality
-        metadata including anomalies JSON and a text result field. The
-        profile is the input to the QA Agent that will write its own
-        anomalies into the same table in a later step.
     """
     run_id      = state["run_id"]
     profile     = state.get("profile", {})
@@ -599,10 +511,6 @@ def build_profiling_graph():
     Compile and return the Profiling Agent as a LangGraph graph.
 
     Graph: START → profiling_node → summary_node → save_profile_node → END
-
-    No conditional edges — all three operations always run. profiling_node
-    is deterministic Python; summary_node makes exactly one LLM call;
-    save_profile_node persists results regardless of whether drift was found.
     """
     graph = StateGraph(AgentState)
 
@@ -621,8 +529,6 @@ def build_profiling_graph():
 def invoke_profiling_graph(state: AgentState) -> AgentState:
     """
     Invoke the profiling graph.
-
-    recursion_limit=10 is generous for a linear 3-node graph with no loops.
     """
     graph = build_profiling_graph()
     return graph.invoke(state)

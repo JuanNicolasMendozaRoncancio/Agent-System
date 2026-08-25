@@ -3,16 +3,6 @@ Tab 2 — Energy Market.
  
 Displays the Narrative Agent's summary and energy generation charts built
 from analysis_runs.viz_json (bar_stats + time_series).
- 
-Data source: analysis_runs (direct PostgreSQL read via db.py).
- 
-Why bar_stats and not raw time_series for the main chart:
-    bar_stats gives mean/min/max/slope per variable — already aggregated
-    by the Visualization Agent. Rendering raw time_series would require
-    a separate Plotly chart with datetime parsing; bar_stats renders
-    immediately with st.bar_chart and communicates the same information
-    (relative magnitudes of each generation type) more clearly for a
-    3-hour window.
 """
 from __future__ import annotations
  
@@ -21,10 +11,8 @@ import pandas as pd
  
 from dashboard.utils.db import get_latest_analysis_run
  
-# Variables to exclude from the energy tab (shown in Tab 3 instead).
 _CLIMATE_PREFIXES = ("climate_",)
  
-# Variables to exclude from display entirely (not meaningful for operators).
 _EXCLUDED_VARS = {"load_actual_aggregated"}
  
  

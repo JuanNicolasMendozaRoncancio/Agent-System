@@ -26,18 +26,6 @@ rca_node2:
  
 save_rca_node:
     No LLM. UPDATE data_quality_runs, publish Redis event: rca_complete.
- 
-Design rationale
-----------------
-Two-node split instead of a ReAct loop: evidence collection (rca_node1)
-and causal reasoning (rca_node2) are cognitively distinct tasks that
-benefit from different prompts. Merging them into a loop would waste tokens
-letting the LLM see its own tool call history when all it needs for
-reasoning is the cleaned summary in rca_evidence.
- 
-rca_evidence is built in Python after ToolNode executes, not by the LLM.
-This mirrors the summarize_node pattern from the Ingestion Agent: the LLM
-is the orchestrator, not the data transporter.
 """
 from __future__ import annotations
 
@@ -54,7 +42,6 @@ from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from sqlalchemy import text
-from typing_extensions import TypedDict
 
 load_dotenv()
 
@@ -70,21 +57,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
  
-# Number of days to look back in PostgreSQL for historical baseline.
 HISTORICAL_WINDOW_DAYS = int(os.getenv("RCA_HISTORICAL_WINDOW_DAYS", "30"))
  
-# Maximum number of historical rows fetched per variable/country pair.
 MAX_HISTORICAL_ROWS = int(os.getenv("RCA_MAX_HISTORICAL_ROWS", "720"))
  
-# Number of RAG results to request from the API.
 RAG_TOP_K = 3
 RAG_KEEP = 2
  
-# Minimum cosine similarity score to include a RAG result.
 RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.60"))
  
-# Severities that qualify anomalies for RCA. LOW anomalies are informational
-# and do not justify the LLM token cost of a full RCA pass.
 _RCA_SEVERITIES = {"MEDIUM", "CRITICAL"}
 
 # ---------------------------------------------------------------------------
@@ -333,11 +314,6 @@ def _filter_rca_anomalies(anomalies: list[dict]) -> list[dict]:
 def _build_llm_with_tools():
     """
     Return (llm_with_tools, provider_name).
- 
-    Same model as the Ingestion Agent (llama-3.1-8b-instant): sufficient
-    for structured tool-call decisions. parallel_tool_calls=True lets the
-    LLM emit all evidence-gathering calls in a single response, so ToolNode
-    executes them before rca_node2 sees any results.
     """
     from langchain_groq import ChatGroq
  
@@ -361,15 +337,10 @@ def _process_tool_messages(messages: list[BaseMessage]) -> dict:
     Parses each ToolMessage by tool name and organises results into the
     rca_evidence structure. Errors from individual tools are captured but
     do not stop the process — rca_node2 reasons with whatever is available.
- 
-    Why process here and not in rca_node2:
-        rca_node2 should receive only clean, structured data. Mixing JSON
-        parsing and business logic into the reasoning node would make the
-        prompt harder to reason about and harder to test.
     """
     evidence: dict[str, Any] = {
-        "historical":  {},   # keyed by "variable/country"
-        "climate":     {},   # keyed by country
+        "historical":  {},   
+        "climate":     {},   
         "rag_results": [],
     }
  
@@ -392,11 +363,9 @@ def _process_tool_messages(messages: list[BaseMessage]) -> dict:
             evidence["climate"][country] = content.get("variables", {})
  
         elif msg.name == "rag_search":
-            # Extend — the LLM may call rag_search multiple times with
-            # different queries for different anomalies.
+
             evidence["rag_results"].extend(content.get("results", []))
  
-    # Deduplicate RAG results by main_argument and re-sort by score.
     seen: set[str] = set()
     deduped: list[dict] = []
     for r in sorted(evidence["rag_results"], key=lambda x: x.get("score", 0.0), reverse=True):
@@ -464,20 +433,6 @@ def rca_node1(state: AgentState) -> dict:
     """
     Evidence-gathering node: LLM decides which tools to call, ToolNode
     executes them, results are processed into rca_evidence.
- 
-    The state update returned by this node:
-    - messages: [AIMessage with tool_calls] — consumed by ToolNode next.
-    - rca_evidence: populated AFTER ToolNode.
- 
-    Implementation note — two-phase execution within rca_node1:
-        Phase 1: call the LLM to get tool decisions (AIMessage with tool_calls).
-        Phase 2: ToolNode runs automatically via the graph edge.
-        Phase 3: a post-tool-processing step reads ToolMessages.
- 
-    Because LangGraph runs ToolNode between rca_node1 and the next node,
-    rca_node1 only does Phase 1. The ToolMessage processing happens in a
-    dedicated _process_rca_evidence node that sits between ToolNode and
-    rca_node2.
     """
     anomalies = _filter_rca_anomalies(state.get("anomalies", []))
  
@@ -514,13 +469,6 @@ def _process_rca_evidence(state: AgentState) -> dict:
  
     Reads ToolMessages appended by ToolNode, builds rca_evidence, and
     clears the message history so rca_node2 starts with a clean slate.
- 
-    Why a separate node and not logic inside rca_node2:
-        ToolNode appends ToolMessages to state['messages'] automatically.
-        We cannot intercept that. This node gives us a clean place to
-        process results and reset message history without mixing parsing
-        logic into the reasoning node — same rationale as summarize_node
-        in the Ingestion Agent.
     """
     evidence = _process_tool_messages(state.get("messages", []))
     logger.info(
@@ -539,10 +487,6 @@ def _process_rca_evidence(state: AgentState) -> dict:
 def rca_node2(state: AgentState) -> dict:
     """
     Causal reasoning node: plain LLM call, no tools.
- 
-    Receives the filtered anomalies and the structured rca_evidence built
-    by _process_rca_evidence. Produces ranked hypotheses in natural language.
-    Token cost is O(n_anomalies + n_evidence_keys), not O(n_records).
     """
     anomalies = _filter_rca_anomalies(state.get("anomalies", []))
     evidence  = state.get("rca_evidence", {})
@@ -608,13 +552,6 @@ def rca_node2(state: AgentState) -> dict:
 def save_rca_node(state: AgentState) -> dict:
     """
     Persist RCA results to PostgreSQL and publish to Redis.
- 
-    Uses UPDATE (not INSERT) on data_quality_runs because save_profile_node
-    already created the row for this run_id. The QA Agent also does an
-    UPDATE. A single row per run keeps the dashboard query simple.
- 
-    Redis publishes event: rca_complete so the Reporter Agent (Step 10)
-    knows RCA is done and can build the final quality report.
     """
     run_id      = state["run_id"]
     rca_result  = state.get("rca_result") or ""
@@ -643,9 +580,7 @@ def save_rca_node(state: AgentState) -> dict:
     except Exception as exc:
         error_msg = str(exc)
         logger.error("save_rca_node: DB update failed: %s", exc)
- 
-    # Publish to Redis even if the DB update failed — downstream agents
-    # should know RCA ran so they can proceed with whatever result exists.
+
     redis_message = json.dumps({
         "run_id":       run_id,
         "event":        "rca_complete",
@@ -681,10 +616,6 @@ def build_rca_graph():
           → rca_node2          (LLM reasons, produces hypotheses)
           → save_rca_node      (persist + Redis)
           → END
- 
-    No conditional edges — the graph always runs all five nodes.
-    rca_node2 handles the empty-anomaly case gracefully by returning
-    a 'not required' message, so no routing logic is needed.
     """
     tool_node = ToolNode(_TOOLS)
  
@@ -709,9 +640,6 @@ def build_rca_graph():
 def invoke_rca_graph(state: AgentState) -> AgentState:
     """
     Invoke the RCA graph.
- 
-    No recursion_limit needed: the graph is linear with no cycles.
-    LangGraph's default is sufficient.
     """
     graph = build_rca_graph()
     return graph.invoke(state)

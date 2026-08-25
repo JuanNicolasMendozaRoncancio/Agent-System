@@ -1,10 +1,5 @@
 """
 PostgreSQL read helpers for the Streamlit dashboard.
- 
-All functions connect directly to PostgreSQL using the same shared engine
-from shared.db. Each function returns plain Python dicts or lists — no
-SQLAlchemy ORM objects — so Streamlit can consume them without any
-additional serialization step.
 """
 from __future__ import annotations
  
@@ -26,14 +21,6 @@ logger = logging.getLogger(__name__)
 def _get_engine():
     """
     Build the SQLAlchemy engine lazily.
-
-    Why lazy and not module-level like shared/db.py:
-        shared/db.py builds the engine at import time using os.getenv().
-        In Streamlit Cloud, secrets are injected as environment variables
-        AFTER the module is first imported, so os.getenv() returns None
-        and the engine is built with the default fallback values ('agentes').
-        Building the engine inside a function guarantees os.getenv() is
-        called at connection time, when secrets are already available.
     """
     database_url = (
         f"postgresql+psycopg://"
@@ -97,10 +84,6 @@ def get_latest_quality_run() -> dict | None:
 def get_latest_analysis_run() -> dict | None:
     """
     Return the most recent row from analysis_runs as a plain dict.
- 
-    viz_json and charts_json are parsed from JSONB into Python dicts.
-    rag_topics_used is parsed into a list.
- 
     """
     try:
         with _get_engine().connect() as conn:
@@ -155,12 +138,6 @@ def get_latest_analysis_run() -> dict | None:
 def get_recent_runs(n: int = 10) -> list[dict]:
     """
     Return the last N runs joining both tables on run_id.
- 
-    Used by Tab 5 (observability) to show a historical run table.
-    Columns from data_quality_runs take precedence for shared fields
-    like llm_provider (the Reporter Agent writes the final provider used).
- 
-    Returns an empty list if no runs exist or the query fails.
     """
     try:
         with _get_engine().connect() as conn:

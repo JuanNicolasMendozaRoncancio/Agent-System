@@ -26,8 +26,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _GROQ_MODEL = "openai/gpt-oss-20b"
-# Larger Groq-hosted model used as fallback when the primary hits rate limits
-# or errors. Same GROQ_API_KEY — no second vendor or extra credential needed.
+
 _GROQ_FALLBACK_MODEL = "openai/gpt-oss-120b"
  
 _DEFAULT_TIMEOUT = 40.0
@@ -80,12 +79,6 @@ def _call_groq_fallback(
     """
     Call the larger Groq fallback model (gpt-oss-120b) using the same
     GROQ_API_KEY as the primary model.
-
-    Why a separate function instead of passing the model name to _call_groq:
-        Keeps _call_groq's signature stable (no model parameter leak into
-        callers) and makes the fallback path explicit and independently testable.
-        The mock target in tests is 'shared.llm_client._call_groq_fallback',
-        mirroring the old '_call_gemini' mock target used in test_llm_client.py.
     """
     client = _groq_client()
 
@@ -159,7 +152,6 @@ def chat_complete(
         logger.info("Groq (primary) answered in %.2fs", elapsed)
         return text, "groq"
     except RateLimitError:
-        # HTTP 429: primary model rate-limited → fall through to larger model.
         logger.warning("Groq primary returned 429 (rate limit); switching to gpt-oss-120b")
 
     except Exception as exc:

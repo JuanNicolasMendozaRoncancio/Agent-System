@@ -11,17 +11,6 @@ Integration tests (@pytest.mark.integration):
     Real API calls to Groq and groq_fallback.  Require GROQ_API_KEY and
     groq_fallback_API_KEY in the environment (.env file).
     Run manually to verify keys are active and response format is correct.
-
-How to run
-----------
-Unit tests only (CI-safe):
-    pytest tests/test_llm_client.py -v
-
-Integration tests only:
-    pytest tests/test_llm_client.py -v -m integration
-
-All tests:
-    pytest tests/test_llm_client.py -v -m "integration or not integration"
 """
 
 import os
@@ -51,9 +40,6 @@ _SYSTEM = "You are a helpful assistant."
 def _make_rate_limit_error() -> RateLimitError:
     """
     Construct a RateLimitError without a real HTTP response.
-
-    RateLimitError inherits from APIStatusError which requires a `response`
-    argument.  We provide a minimal mock so the constructor does not blow up.
     """
     mock_response = MagicMock()
     mock_response.status_code = 429
@@ -207,11 +193,8 @@ class TestManualOverride:
 
 @pytest.mark.integration
 class TestGroqIntegration:
-    """Call Groq for real and verify the response contract.
-
-    _call_groq_fallback is mocked here to guarantee Groq is the only network call —
-    regardless of whether Groq itself triggers a fallback attempt, groq_fallback's
-    rate limit cannot interfere with these assertions.
+    """
+    Call Groq for real and verify the response contract.
     """
 
     def test_groq_returns_text_and_provider(self, monkeypatch):

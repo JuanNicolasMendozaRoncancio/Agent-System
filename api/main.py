@@ -13,21 +13,6 @@ Architecture mirrors test_e2e_pipeline.py exactly:
   5. Poll Redis for 'narrative_complete', emitting SSE events for each
      sysyem 2 step as they complete (detected via intermediate Redis events).
   6. Emit final 'pipeline_complete' SSE event.
- 
-Why SSE and not WebSockets:
-    SSE is unidirectional (server → client), which is exactly the pattern
-    for progress reporting. WebSockets add bidirectional complexity that is
-    not needed here. FastAPI supports SSE natively via StreamingResponse.
- 
-Why run_in_executor for the agents:
-    LangGraph agents are synchronous. FastAPI's async event loop must not be
-    blocked. run_in_executor moves each blocking agent call to the thread pool,
-    keeping the event loop free to flush SSE chunks to the client.
- 
-Why a daemon thread for the subscriber (same as E2E test):
-    The subscriber thread blocks on pubsub.listen(). Daemon=True ensures it
-    is killed automatically when the request finishes, without needing a
-    manual stop mechanism per request.
 """
 from __future__ import annotations
 
@@ -86,10 +71,6 @@ class PipelineRunRequest(BaseModel):
 def _sse(data: dict) -> str:
     """
     Format a dict as an SSE data line.
- 
-    The SSE protocol requires each event to be prefixed with 'data: ' and
-    terminated with two newlines. FastAPI's StreamingResponse yields these
-    chunks directly to the HTTP response body.
     """
     return f"data: {json.dumps(data)}\n\n"
  
@@ -117,16 +98,6 @@ def _event_sistema2(agent: str, status: str, **extra) -> str:
 async def _pipeline_generator(req: PipelineRunRequest) -> AsyncGenerator[str, None]:
     """
     Async generator that runs the full pipeline and yields SSE events.
- 
-    Mirrors test_e2e_pipeline.py line by line:
-      - Same agent invocation order.
-      - Same _store_records call between Ingestion and Profiling.
-      - Same pubsub subscribe-before-listener pattern.
-      - Same Redis polling loop for System 2 completion.
- 
-    Each blocking agent call is offloaded to the default thread pool executor
-    via asyncio.get_event_loop().run_in_executor() so the async event loop
-    remains free to flush SSE chunks between agent completions.
     """
     loop: AbstractEventLoop = asyncio.get_event_loop()
     run_id = str(uuid.uuid4())
@@ -157,7 +128,6 @@ async def _pipeline_generator(req: PipelineRunRequest) -> AsyncGenerator[str, No
     pubsub = redis_client.pubsub()
     pubsub.subscribe("validated_data")
  
-    # Drain any stale messages from previous runs buffered in this connection.
     for _ in range(10):
         pubsub.get_message(timeout=0.05)
 
@@ -189,7 +159,6 @@ async def _pipeline_generator(req: PipelineRunRequest) -> AsyncGenerator[str, No
         yield _sse({"event": "pipeline_failed", "run_id": run_id, "error": str(exc)})
         return
  
-    # _store_records is required so ProfilingAgent can read from _record_store.
     from System1.Ingestion.ingestion_agent import _store_records
     _store_records(run_id, state["records"])
  
@@ -266,14 +235,11 @@ async def _pipeline_generator(req: PipelineRunRequest) -> AsyncGenerator[str, No
     logger.info("System 1 complete — polling Redis for System 2 events")
 
     # --- Sistema 2: poll Redis for intermediate and final events ------------
-    # Mirrors the polling loop in E2E test.
-    # We also detect intermediate events (analysis_complete, viz_complete)
-    # so we can emit SSE progress for each Sistema 2 agent.
+
  
     _POLL_ITERATIONS = 600      
     _POLL_TIMEOUT_S  = 0.5     
  
-    # Emit "running" for Sistema 2 agents optimistically — we will emit "done"
     yield _event_sistema2("Analysis", "running")
  
     s2_agent_map = {

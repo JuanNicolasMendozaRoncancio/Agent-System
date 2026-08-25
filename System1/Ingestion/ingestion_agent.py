@@ -28,13 +28,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from dotenv import load_dotenv
 
-load_dotenv(encoding="latin-1")
+load_dotenv()
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -86,23 +85,7 @@ class AgentState(TypedDict):
     cycle_count: int                      
 
 
-# Maximum number of ReAct cycles before forcing save_node.
-# Each cycle = 1 LLM call + N tool executions.
-# With 2 cycles: first pass fetches all data, second pass retries any failures.
 MAX_CYCLES = 2
-# ---------------------------------------------------------------------------
-# In-process record store
-#
-# Why not pass records through ToolMessages?
-# ToolMessages are fed back to the LLM on every ReAct iteration. A 3-hour
-# ENTSO-E window already produces ~200 records × ~100 bytes of JSON = ~20k
-# tokens, exceeding Groq's free-tier TPM limit. The LLM is the orchestrator,
-# not a data transporter — it only needs a short summary ("48 records fetched")
-# to decide whether to call more tools or stop.
-#
-# Records are stored here keyed by run_id, collected by save_node after the
-# loop ends, then cleared to avoid memory leaks between runs.
-# ---------------------------------------------------------------------------
 _record_store: dict[str, list[dict]] = {}
 
 
@@ -226,11 +209,6 @@ def _get_copernicus_client():
 def _build_llm_with_tools():
     """
     Return (llm_with_tools, provider_name).
-
-    Uses llama-3.1-8b-instant: sufficient for structured tool-call decisions
-    (no open-ended reasoning required) and stays within Groq free-tier TPM.
-    parallel_tool_calls=True lets the LLM emit all tool calls for all countries
-    in a single AIMessage, so tool_node executes them all before returning.
     """
     from langchain_groq import ChatGroq
 
@@ -281,8 +259,6 @@ Rules:
 def _build_first_human_message(state: AgentState) -> str:
     """
     Build the initial HumanMessage content for the first cycle.
-
-    Contains the full run context so the LLM knows what to fetch.
     """
     return (
         f"Run ID: {state['run_id']}\n"
@@ -298,10 +274,6 @@ def _build_first_human_message(state: AgentState) -> str:
 def _build_retry_human_message(state: AgentState) -> str:
     """
     Build the fresh HumanMessage content for retry cycles.
-
-    Constructed entirely from state['tool_results'] — no message history needed.
-    This is what keeps token consumption flat across cycles: the LLM receives
-    a compact structured summary instead of the full accumulated message history.
     """
     lines = [
         f"Run ID: {state['run_id']} — cycle {state['cycle_count']} summary:\n"
@@ -334,16 +306,6 @@ def ingestion_node(state: AgentState) -> dict:
     """
     Primary LangGraph node: sends the run context to the LLM and lets it
     decide which fetch tools to call.
-
-    On cycle 0 (first pass): sends full run context, expects all tool calls at once.
-    On cycle > 0 (retry pass): sends a fresh summary from state['tool_results'],
-    expects only failed tools to be retried.
-
-    Why a fresh HumanMessage instead of accumulated history?
-    The LLM only needs to know the current state of the run — which tools
-    succeeded and which failed — not the full sequence of past messages.
-    Passing a fresh HumanMessage built from AgentState keeps token consumption
-    O(1) per cycle instead of O(n_cycles).
     """
     llm_with_tools, provider = _build_llm_with_tools()
 
@@ -361,7 +323,6 @@ def ingestion_node(state: AgentState) -> dict:
 
     response: AIMessage = llm_with_tools.invoke(messages)
 
-    # Replace messages entirely on each cycle, do not accumulate.
     return {
         "messages": [response],
         "llm_provider": provider,
@@ -377,12 +338,6 @@ def summarize_node(state: AgentState) -> dict:
     2. Build a structured tool_results list in AgentState from those messages.
     3. Increment cycle_count.
     4. Clear messages so the next ingestion_node call starts with a clean slate.
-
-    Why a separate node and not logic inside ingestion_node?
-    tool_node appends ToolMessages to state['messages'] automatically — we
-    cannot intercept that. summarize_node runs after tool_node and before
-    ingestion_node, giving us a clean place to process results and reset
-    the message history without mixing concerns into ingestion_node.
     """
     new_tool_results: list[dict] = []
 
@@ -427,11 +382,6 @@ def _should_continue(state: AgentState) -> str:
 
     Sends to tool_node if the LLM made tool calls AND we have not hit the
     cycle cap. Otherwise proceeds to save_node.
-
-    Why cap at MAX_CYCLES and not rely solely on the LLM deciding to stop?
-    The LLM could theoretically retry indefinitely if errors persist. A hard
-    cap guarantees the graph always terminates and save_node always runs,
-    persisting whatever records were successfully fetched.
     """
     last_message = state["messages"][-1]
     has_tool_calls = hasattr(last_message, "tool_calls") and bool(last_message.tool_calls)
@@ -448,12 +398,6 @@ def save_node(state: AgentState) -> dict:
     Two writes happen here:
     1. Bulk INSERT into energy_climate_records (one row per record).
     2. Single INSERT into agent_state (one row per agent run).
-
-    Why bulk INSERT with executemany instead of the SQLAlchemy ORM?
-    The ORM emits one INSERT per object. psycopg v3's executemany() sends
-    all rows in a single protocol message — one network roundtrip regardless
-    of how many records we have. For 48+ records per run the difference is
-    measurable.
     """
     started_at = datetime.now(timezone.utc)
     run_id = state["run_id"]
@@ -558,13 +502,6 @@ def copernicus_node(state: AgentState) -> dict:
     """
     Deterministic Copernicus ingestion node — no LLM involved.
 
-    Why a separate node instead of LLM tools:
-        fetch_temperature and fetch_solar_radiation are always called for
-        every country on a full run — there is no decision for the LLM to make.
-        Copernicus also takes 30-70s per variable, which causes the LLM to
-        time out or stop waiting before the tool returns. A dedicated Python
-        node runs the calls sequentially and reliably outside the ReAct loop.
-
     Skipped entirely for incremental runs (climate data changes slowly and
     does not need hourly updates).
     """
@@ -633,12 +570,6 @@ def copernicus_node(state: AgentState) -> dict:
 def load_node(state: AgentState) -> dict:
     """
     Deterministic ENTSO-E load ingestion node — no LLM involved.
-
-    Why a separate node instead of relying on the LLM tool fetch_load:
-        fetch_load is mandatory for every run (full and incremental) but
-        the LLM orchestrator occasionally omits it. A dedicated Python node
-        guarantees load_actual_aggregated is always fetched, which is required
-        by _compute_risk_for_country() in the Analysis Agent (C1 component).
 
     Always runs for both full and incremental runs — load data is needed
     for the risk score regardless of run type.
@@ -730,7 +661,6 @@ def build_ingestion_graph():
         {"tool_node": "tool_node", "save_node": "save_node"},
     )
 
-    # After tools execute, always pass through summarize_node before
     graph.add_edge("tool_node", "summarize_node")
     graph.add_edge("summarize_node", "ingestion_node")
     graph.add_edge("save_node", "copernicus_node")
@@ -743,13 +673,6 @@ def build_ingestion_graph():
 def invoke_ingestion_graph(state: AgentState) -> AgentState:
     """
     Invoke the ingestion graph with a hard cap on LangGraph node visits.
-
-    Why recursion_limit=20?
-    LangGraph counts node visits, not LLM calls. Each cycle visits 3 nodes:
-    ingestion_node → tool_node → summarize_node. With MAX_CYCLES=2 we need
-    at most 6 cycle nodes + 2 ingestion_node calls + 1 save_node = ~9 visits.
-    20 gives comfortable headroom while preventing runaway loops if something
-    unexpected happens in the routing logic.
     """
     graph = build_ingestion_graph()
     config = {"recursion_limit": 20}

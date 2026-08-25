@@ -4,16 +4,6 @@ Tab 4 — Data Quality & Risk.
 Displays QA results (anomaly table, severity), the Reporter Agent's
 executive run report, the RCA Agent's hypotheses, and the energy supply
 risk breakdown from the Visualization Agent.
-
-Data sources:
-    - data_quality_runs: anomalies, severity, run_report, rca_result
-    - analysis_runs.viz_json.risk_breakdown: C1–C4 component scores
-
-Why read from two tables here:
-    Quality metadata (QA, RCA, report) lives in data_quality_runs written
-    by Sistema 1. Risk indicators live in analysis_runs.viz_json written
-    by Sistema 2's Visualization Agent. Both share the same run_id so they
-    describe the same pipeline execution.
 """
 from __future__ import annotations
 
@@ -110,7 +100,6 @@ def render() -> None:
                 total = risk.get("total_score", 0)
                 has_temp = risk.get("has_temperature_data", False)
 
-                # Color the total score.
                 if total >= 60:
                     score_color = "🔴"
                 elif total >= 30:

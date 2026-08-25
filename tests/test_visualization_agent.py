@@ -4,11 +4,6 @@ Tests for System2/visualization_agent.py
 Unit tests  : fully mocked — no network, no DB, no LLM calls.
 Integration : marked @pytest.mark.integration — require Docker running.
 
-Run unit tests only:
-    python -m pytest tests/test_visualization_agent.py -v -m "not integration"
-
-Run integration tests:
-    python -m pytest tests/test_visualization_agent.py -v -m integration
 """
 from __future__ import annotations
 
@@ -123,9 +118,6 @@ def _make_analysis_results(
 def _mock_engine_and_redis(time_series_rows: list | None = None):
     """
     Return (mock_engine, mock_redis) for patching DB and Redis.
-
-    time_series_rows: list of (period_datetime, variable_str, mean_float)
-                      returned by the DATE_TRUNC query.
     """
     rows = time_series_rows or [
         (datetime(2024, 6, 1, tzinfo=timezone.utc), "generation_solar",        1200.0),
@@ -139,7 +131,6 @@ def _mock_engine_and_redis(time_series_rows: list | None = None):
     mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
     mock_engine.connect.return_value.__exit__  = MagicMock(return_value=False)
 
-    # First fetchone() call → anchor timestamp; subsequent fetchall() → rows
     anchor_ts = datetime(2024, 6, 2, 23, tzinfo=timezone.utc)
     mock_conn.execute.return_value.fetchone.return_value = (anchor_ts,)
     mock_conn.execute.return_value.fetchall.return_value = rows
@@ -203,7 +194,6 @@ class TestBuildCountryComparison:
     def test_inverts_structure(self):
         from System2.Visualization.visualization_agent import _build_country_comparison
         result = _build_country_comparison(_make_analysis_results(["FR", "DE"]))
-        # generation_solar should contain both FR and DE
         assert "FR" in result["generation_solar"]
         assert "DE" in result["generation_solar"]
 
@@ -315,7 +305,6 @@ class TestFetchTimeSeries:
         mock_engine, _ = _mock_engine_and_redis()
         with patch("System2.Visualization.visualization_agent.engine", mock_engine):
             result = _fetch_time_series(["FR"], "run-1", "day")
-        # Check structure for first variable found
         for variable, series in result["FR"].items():
             assert isinstance(series, list)
             assert all("t" in point and "v" in point for point in series)
@@ -366,11 +355,6 @@ class TestFetchTimeSeries:
 # ===========================================================================
 
 class TestVizNode:
-    """
-    viz_node must produce all four chart structures.
-    The DB query (_fetch_time_series) is mocked; the in-memory transforms
-    are tested via their pure-function tests above.
-    """
 
     def test_viz_data_contains_all_keys(self):
         state = _make_state()
@@ -396,7 +380,6 @@ class TestVizNode:
         mock_engine, _ = _mock_engine_and_redis()
         with patch("System2.Visualization.visualization_agent.engine", mock_engine):
             result = viz_node(state)
-        # Must be parseable as ISO datetime
         datetime.fromisoformat(result["viz_data"]["generated_at"])
 
     def test_empty_analysis_results_produces_empty_bar_stats(self):
@@ -523,10 +506,6 @@ class TestSaveVizNode:
 # ===========================================================================
 
 class TestGranularityValidation:
-    """
-    VIZ_TIME_GRANULARITY must only accept whitelisted values.
-    Invalid values must fall back to 'day' without raising.
-    """
 
     def test_valid_granularities_accepted(self):
         """'hour', 'day', 'week' are valid and must not trigger fallback."""
@@ -552,11 +531,6 @@ class TestGranularityValidation:
 
 @pytest.mark.integration
 class TestVizIntegration:
-    """
-    End-to-end run of the Visualization Agent graph.
-    Requires: PostgreSQL + Redis running, and a pre-existing analysis_runs
-    row with analysis_results in AgentState (seeded directly here).
-    """
 
     def _insert_analysis_run(self, run_id: str) -> None:
         """Insert a minimal analysis_runs row so UPDATE has a target."""
