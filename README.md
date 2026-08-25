@@ -1,8 +1,8 @@
 # Climate & Energy Multi-Agent System
 
-[![CI](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml/badge.svg)](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml)
+[![CI](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app.streamlit.app)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-purple)](https://github.com/langchain-ai/langgraph)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -37,9 +37,9 @@ A production-grade **Producer-Consumer multi-agent system** for monitoring Europ
 
 | Component | URL |
 |-----------|-----|
-| Dashboard (Streamlit) | [your-app.streamlit.app](https://agent-system-kzkhzpezphegbt5mnrmtgp.streamlit.app) |
-| API (FastAPI + SSE) | [cloud-run-url/docs](https://climate-agents-api-1049167521127.europe-central2.run.app) |
-| LangSmith traces | [smith.langchain.com](https://smith.langchain.com/o/5ee2c88b-656d-4da6-9835-151cd4fc6cc3/projects?timeModel=%7B"duration"%3A"1d"%7D) |
+| Dashboard (Streamlit) | [Agent System App](https://agent-system-kzkhzpezphegbt5mnrmtgp.streamlit.app) |
+| API (FastAPI + SSE) | [Cloud Agent System](https://climate-agents-api-1049167521127.europe-central2.run.app) |
+| LangSmith traces | [Langchain](https://smith.langchain.com/o/5ee2c88b-656d-4da6-9835-151cd4fc6cc3/projects?timeModel=%7B"duration"%3A"1d"%7D) |
 
 ---
 
