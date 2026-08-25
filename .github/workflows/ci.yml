@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -35,12 +34,12 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
-      ENTSOE_API_KEY:      ${{ secrets.ENTSOE_API_KEY }}
-      COPERNICUS_URL:      ${{ secrets.COPERNICUS_URL }}
-      COPERNICUS_API_KEY:  ${{ secrets.COPERNICUS_API_KEY }}
-      RAG_API_URL:         ${{ secrets.RAG_API_URL }}
-      RAG_API_KEY:         ${{ secrets.RAG_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+      COPERNICUS_URL: ${{ secrets.COPERNICUS_URL }}
+      COPERNICUS_API_KEY: ${{ secrets.COPERNICUS_API_KEY }}
+      RAG_API_URL: ${{ secrets.RAG_API_URL }}
+      RAG_API_KEY: ${{ secrets.RAG_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
