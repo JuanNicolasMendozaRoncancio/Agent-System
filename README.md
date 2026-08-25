@@ -1,6 +1,6 @@
 # Climate & Energy Multi-Agent System
 
-[![CI](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JuanNicolasMendozaRoncancio/agents-climate-energy/actions/workflows/ci.yml)
+[![CI](https://github.com/JuanNicolasMendozaRoncancio/Agent-System/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JuanNicolasMendozaRoncancio/Agent-System/actions/workflows/ci.yml)
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app.streamlit.app)
 [![Python 3.14](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-purple)](https://github.com/langchain-ai/langgraph)
